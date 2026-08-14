@@ -61,6 +61,33 @@ export default async function handler(req, res) {
       } catch {}
     }
 
+    // 2. High-Quality Cute Natural Indonesian Voice TTS Endpoint
+    if (pathname === "/api/tts" && req.method === "GET") {
+      const q = urlObj.searchParams.get("text") || "";
+      if (!q.trim()) {
+        res.statusCode = 400;
+        return res.end("Missing text parameter");
+      }
+      try {
+        const cleanQuery = q.replace(/[*_#`~]/g, "").slice(0, 300);
+        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(cleanQuery)}&tl=id&client=tw-ob`;
+        const ttsRes = await fetch(ttsUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          },
+        });
+        if (ttsRes.ok) {
+          const audioBuf = await ttsRes.arrayBuffer();
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "audio/mpeg");
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.end(Buffer.from(audioBuf));
+        }
+      } catch (err) {
+        console.error("TTS fetch error:", err);
+      }
+    }
+
     // 2. SSR Rendering via worker.fetch
     const worker = await getWorker();
 

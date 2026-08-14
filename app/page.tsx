@@ -789,27 +789,77 @@ export default function Home() {
     }
   }, []);
 
+  const playCuteAudio = useCallback(async (text: string): Promise<boolean> => {
+    try {
+      const clean = text.replace(/[*_#`~]/g, "").trim();
+      if (!clean) return false;
+      const res = await fetch(`/api/tts?text=${encodeURIComponent(clean.slice(0, 300))}`);
+      if (!res.ok) return false;
+      const blob = await res.blob();
+      if (!blob || blob.size < 100) return false;
+
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return false;
+      const ctx = new AudioCtx();
+      if (ctx.state === "suspended") await ctx.resume();
+
+      const arrayBuf = await blob.arrayBuffer();
+      const audioBuffer = await ctx.decodeAudioData(arrayBuf);
+
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.playbackRate.value = 1.13; // cute, youthful, anime-robot pitch & energetic cadence!
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = "highshelf";
+      filter.frequency.value = 3200;
+      filter.gain.value = 2.5;
+
+      source.connect(filter);
+      filter.connect(ctx.destination);
+
+      isSpeakingRef.current = true;
+      setSpeaking(true);
+
+      source.onended = () => {
+        handleSpeechEnd();
+        void ctx.close();
+      };
+
+      source.start(0);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [handleSpeechEnd]);
+
   const browserSpeak = useCallback(async (text: string) => {
     if (!("speechSynthesis" in window)) {
       handleSpeechEnd();
       return;
     }
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(text.replace(/[*_#`~]/g, ""));
     utterance.lang = "id-ID";
-    utterance.rate = 1.02;
-    utterance.pitch = 1.15;
+    utterance.rate = 1.08; // cheerful, lively cadence
+    utterance.pitch = 1.32; // cute, cheerful, high-pitch anime robot voice
     const voices = await getBrowserVoices();
+    const isIndonesian = (voice: SpeechSynthesisVoice) =>
+      voice.lang.toLowerCase().startsWith("id") || voice.lang.toLowerCase().startsWith("in");
+    const isGoogleIndo = (voice: SpeechSynthesisVoice) =>
+      isIndonesian(voice) && /google/i.test(voice.name);
     const soundsFeminine = (voice: SpeechSynthesisVoice) =>
       /gadis|dewi|siti|female|woman|serena|zira|sara|samantha|aria|ava|jenny|natasha|sonia|tessa/i.test(voice.name);
-    const isIndonesian = (voice: SpeechSynthesisVoice) => voice.lang.toLowerCase().startsWith("id");
     const isMalay = (voice: SpeechSynthesisVoice) => voice.lang.toLowerCase().startsWith("ms");
+
     utterance.voice =
+      voices.find(isGoogleIndo) ??
       voices.find((voice) => isIndonesian(voice) && soundsFeminine(voice)) ??
+      voices.find(isIndonesian) ??
       voices.find((voice) => isMalay(voice) && soundsFeminine(voice)) ??
       voices.find(soundsFeminine) ??
-      voices.find(isIndonesian) ??
       null;
+
     utterance.onstart = () => {
       isSpeakingRef.current = true;
       setSpeaking(true);
@@ -820,45 +870,49 @@ export default function Home() {
   }, [handleSpeechEnd]);
 
   const speak = useCallback(async (text: string) => {
-    if (voiceEngine === "browser") {
-      browserSpeak(text);
-      return;
-    }
-    try {
-      isSpeakingRef.current = true;
-      setSpeaking(true);
-      const response = await fetch(`${API_BASE}/api/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          engine: voiceEngine,
-          speaker: voiceProfile,
-          instruction: voiceStyle,
-          language: "Auto",
-        }),
-      });
-      if (!response.ok) throw new Error("TTS belum siap");
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        handleSpeechEnd();
-      };
-      audio.onerror = () => {
-        URL.revokeObjectURL(url);
-        browserSpeak(text);
-      };
-      await audio.play();
-    } catch {
-      if (!fallbackNoticeRef.current) {
-        fallbackNoticeRef.current = true;
-        showToast("Suara natural lokal belum aktif — sementara memakai suara browser");
+    // 1. High-Quality Natural Cute Indonesian Voice (Online & Vercel)
+    const cuteOk = await playCuteAudio(text);
+    if (cuteOk) return;
+
+    // 2. Local Python Server (Supertonic F2) if running locally
+    if (voiceEngine !== "browser") {
+      try {
+        isSpeakingRef.current = true;
+        setSpeaking(true);
+        const response = await fetch(`${API_BASE}/api/tts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text,
+            engine: voiceEngine,
+            speaker: voiceProfile,
+            instruction: voiceStyle,
+            language: "Auto",
+          }),
+        });
+        if (response.ok) {
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            handleSpeechEnd();
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            browserSpeak(text);
+          };
+          await audio.play();
+          return;
+        }
+      } catch {
+        // Fall through
       }
-      void browserSpeak(text);
     }
-  }, [browserSpeak, handleSpeechEnd, showToast, voiceEngine, voiceProfile, voiceStyle]);
+
+    // 3. Tuned High-Pitch Browser Speech
+    void browserSpeak(text);
+  }, [browserSpeak, handleSpeechEnd, playCuteAudio, voiceEngine, voiceProfile, voiceStyle]);
 
   useEffect(() => {
     speakRef.current = (text: string) => void speak(text);
