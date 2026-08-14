@@ -9,12 +9,60 @@ async function getWorker() {
   return workerPromise;
 }
 
+const MIME_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".wasm": "application/wasm",
+  ".task": "application/octet-stream",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".webm": "video/webm",
+  ".wav": "audio/wav",
+  ".mp3": "audio/mpeg",
+};
+
 export default async function handler(req, res) {
   try {
-    const worker = await getWorker();
     const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
     const proto = req.headers["x-forwarded-proto"] || "https";
     const fullUrl = `${proto}://${host}${req.url}`;
+    const urlObj = new URL(req.url, `${proto}://${host}`);
+    const pathname = urlObj.pathname;
+    const ext = path.extname(pathname).toLowerCase();
+
+    // 1. Direct Static File Serving for CSS, JS, WASM, Models, etc.
+    if (ext && MIME_TYPES[ext]) {
+      // Check in dist/client first
+      try {
+        const clientPath = path.join(process.cwd(), "dist/client", pathname);
+        const data = await fs.readFile(clientPath);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", MIME_TYPES[ext]);
+        res.setHeader("Cache-Control", pathname.startsWith("/_next/static/") ? "public, max-age=31536000, immutable" : "public, max-age=86400");
+        return res.end(data);
+      } catch {}
+
+      // Check in public folder
+      try {
+        const publicPath = path.join(process.cwd(), "public", pathname);
+        const data = await fs.readFile(publicPath);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", MIME_TYPES[ext]);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.end(data);
+      } catch {}
+    }
+
+    // 2. SSR Rendering via worker.fetch
+    const worker = await getWorker();
 
     const headers = new Headers();
     for (const [k, v] of Object.entries(req.headers)) {
@@ -43,12 +91,18 @@ export default async function handler(req, res) {
             try {
               const filePath = path.join(process.cwd(), "dist/client", url.pathname);
               const data = await fs.readFile(filePath);
-              return new Response(data);
+              const assetExt = path.extname(url.pathname).toLowerCase();
+              const headers = new Headers();
+              if (MIME_TYPES[assetExt]) headers.set("Content-Type", MIME_TYPES[assetExt]);
+              return new Response(data, { headers });
             } catch {
               try {
                 const publicPath = path.join(process.cwd(), "public", url.pathname);
                 const publicData = await fs.readFile(publicPath);
-                return new Response(publicData);
+                const assetExt = path.extname(url.pathname).toLowerCase();
+                const headers = new Headers();
+                if (MIME_TYPES[assetExt]) headers.set("Content-Type", MIME_TYPES[assetExt]);
+                return new Response(publicData, { headers });
               } catch {
                 return new Response("Not found", { status: 404 });
               }

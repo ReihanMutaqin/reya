@@ -3,18 +3,6 @@
   "buildCommand": "npm run build",
   "routes": [
     {
-      "src": "/_next/static/(.*)",
-      "dest": "/dist/client/_next/static/$1"
-    },
-    {
-      "src": "/mediapipe/(.*)",
-      "dest": "/dist/client/mediapipe/$1"
-    },
-    {
-      "src": "/models/(.*)",
-      "dest": "/dist/client/models/$1"
-    },
-    {
       "src": "/(.*)",
       "dest": "/api/index.js"
     }
