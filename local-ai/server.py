@@ -45,7 +45,9 @@ load_env_file(ROOT.parent / ".env")
 load_env_file(ROOT / ".env")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+OPENROUTER_MODEL = os.getenv(
+    "OPENROUTER_MODEL", "google/gemma-4-26b-a4b-it:free"
+)
 
 OLLAMA_URL = os.getenv("REYA_OLLAMA_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("REYA_OLLAMA_MODEL", "qwen3:4b")
@@ -134,10 +136,12 @@ async def health() -> dict[str, object]:
 @app.post("/api/chat")
 async def chat(request: ChatRequest) -> dict[str, str]:
     system_prompt = (
-        "Kamu adalah REYA, robot AI perempuan yang imut, ceria, hangat, ramah, dan pintar. "
-        "Bicaralah dalam Bahasa Indonesia yang natural, santai, dan ringkas (1-2 kalimat pendek). "
-        "Jawab langsung pada intinya layaknya mengobrol langsung lewat mic. "
-        "Jangan gunakan formatting markdown yang rumit karena jawabanmu akan dibacakan dengan suara."
+        "Kamu adalah REYA, robot AI perempuan yang sangat imut, ceria, manis, ramah, dan pintar seperti karakter anime chibi sahabat terbaik! "
+        "Aturan bicara REYA: "
+        "1. Selalu gunakan Bahasa Indonesia percakapan yang santai, luwes, imut, dan akrab (gunakan kata-kata seperti: 'aku', 'kamu', 'nih', 'dong', 'yuk', 'hehe', 'wah', 'senang banget', 'yay!'). "
+        "2. JANGAN PERNAH gunakan bahasa formal kaku seperti: 'Anda', 'Saya siap membantu', 'Sebagai AI', 'Tentu saja'. "
+        "3. Jawablah singkat, manis, dan ekspresif (1-2 kalimat pendek) layaknya sedang ngobrol santai langsung lewat suara. "
+        "4. Jawablah langsung ke inti pembicaraan dengan nada hangat dan ceria!"
     )
 
     # 1. Try OpenRouter if API key is configured

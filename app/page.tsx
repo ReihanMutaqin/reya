@@ -12,7 +12,13 @@ import { FilesetResolver, GestureRecognizer } from "@mediapipe/tasks-vision";
 const API_BASE = "http://127.0.0.1:8765";
 const OPENROUTER_API_KEY = process.env.NEXT_PUBLIC_OPENROUTER_API_KEY || "";
 const OPENROUTER_MODEL =
-  process.env.NEXT_PUBLIC_OPENROUTER_MODEL || "openrouter/free";
+  process.env.NEXT_PUBLIC_OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";
+const FALLBACK_MODELS = [
+  "google/gemma-4-26b-a4b-it:free",
+  "google/gemma-4-31b-it:free",
+  "openai/gpt-oss-20b:free",
+  "openrouter/free",
+];
 
 type Message = { role: "user" | "assistant"; content: string };
 type Health = {
@@ -870,41 +876,59 @@ export default function Home() {
     let answer = "";
 
     const systemPrompt =
-      "Kamu adalah REYA, robot AI perempuan yang imut, ceria, hangat, ramah, dan pintar. " +
-      "Bicaralah dalam Bahasa Indonesia yang natural, santai, dan ringkas (1-2 kalimat pendek). " +
-      "Jawab langsung pada intinya layaknya mengobrol suara langsung secara real-time lewat mic. " +
-      "Jangan gunakan format markdown seperti bintang atau bullet points karena jawabanmu akan dibacakan dengan suara.";
+      "Kamu adalah REYA, robot AI perempuan yang sangat imut, ceria, manis, ramah, dan pintar seperti karakter anime chibi sahabat terbaik! " +
+      "Aturan bicara REYA: " +
+      "1. Selalu gunakan Bahasa Indonesia percakapan yang santai, luwes, imut, dan akrab (gunakan kata-kata seperti: 'aku', 'kamu', 'nih', 'dong', 'yuk', 'hehe', 'wah', 'senang banget', 'yay!'). " +
+      "2. JANGAN PERNAH gunakan bahasa formal kaku seperti: 'Anda', 'Saya siap membantu', 'Sebagai AI', 'Tentu saja'. " +
+      "3. Jawablah singkat, manis, dan ekspresif (1-2 kalimat pendek) layaknya sedang ngobrol santai langsung lewat suara. " +
+      "4. Jawablah langsung ke inti pembicaraan dengan nada hangat dan ceria!";
 
-    // 1. Direct OpenRouter call (Fastest for conversation)
+    const cleanCuteResponse = (raw: string) => {
+      return raw
+        .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+        .replace(/^(?:Here's a thinking process|Thinking Process:)[\s\S]*?\n\n/i, "")
+        .replace(/\*.*?\*/g, "")
+        .replace(/[#_`]/g, "")
+        .trim();
+    };
+
+    // 1. Direct OpenRouter call with fallback models (Fastest for conversation)
     if (OPENROUTER_API_KEY) {
-      try {
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost:3088",
-            "X-Title": "REYA Robot AI",
-          },
-          body: JSON.stringify({
-            model: OPENROUTER_MODEL,
-            messages: [
-              { role: "system", content: systemPrompt },
-              ...nextMessages.slice(-8).map((m) => ({ role: m.role, content: m.content })),
-            ],
-            max_tokens: 140,
-            temperature: 0.75,
-          }),
-          signal: AbortSignal.timeout(20000),
-        });
-        if (response.ok) {
-          const data = (await response.json()) as {
-            choices?: Array<{ message?: { content?: string } }>;
-          };
-          answer = data.choices?.[0]?.message?.content?.trim() ?? "";
+      for (const modelToTry of FALLBACK_MODELS) {
+        if (answer) break;
+        try {
+          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": "http://localhost:3088",
+              "X-Title": "REYA Robot AI",
+            },
+            body: JSON.stringify({
+              model: modelToTry,
+              messages: [
+                { role: "system", content: systemPrompt },
+                ...nextMessages.slice(-8).map((m) => ({ role: m.role, content: m.content })),
+              ],
+              max_tokens: 120,
+              temperature: 0.85,
+            }),
+            signal: AbortSignal.timeout(15000),
+          });
+          if (response.ok) {
+            const data = (await response.json()) as {
+              choices?: Array<{ message?: { content?: string } }>;
+            };
+            const candidate = cleanCuteResponse(data.choices?.[0]?.message?.content ?? "");
+            if (candidate) {
+              answer = candidate;
+              break;
+            }
+          }
+        } catch {
+          // Try next fallback model
         }
-      } catch {
-        // Fall through to server endpoint
       }
     }
 
