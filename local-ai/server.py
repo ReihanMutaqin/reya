@@ -227,16 +227,36 @@ def synthesize_voicebox(request: TTSRequest) -> bytes:
     profile_id = request.speaker or "default"
 
     with httpx.Client(timeout=30) as client:
+        if profile_id == "default":
+            try:
+                prof_res = client.get(f"{target_url}/profiles", timeout=2.5)
+                if prof_res.is_success:
+                    prof_data = prof_res.json()
+                    raw_list = (
+                        prof_data
+                        if isinstance(prof_data, list)
+                        else prof_data.get("profiles", [])
+                        if isinstance(prof_data, dict)
+                        else []
+                    )
+                    if raw_list and isinstance(raw_list[0], dict):
+                        profile_id = str(raw_list[0].get("id") or raw_list[0].get("profile_id") or "")
+            except Exception:
+                pass
+
         # Try OpenAI-compatible speech endpoint exposed by jamiepine/voicebox
         try:
+            speech_payload: dict[str, object] = {
+                "model": "tts-1",
+                "input": request.text.strip(),
+                "response_format": "wav",
+            }
+            if profile_id and profile_id != "default":
+                speech_payload["voice"] = profile_id
+
             speech_res = client.post(
                 f"{target_url}/v1/audio/speech",
-                json={
-                    "model": "qwen",
-                    "input": request.text.strip(),
-                    "voice": profile_id,
-                    "response_format": "wav",
-                },
+                json=speech_payload,
             )
             if speech_res.is_success and len(speech_res.content) > 200:
                 return speech_res.content
@@ -244,12 +264,14 @@ def synthesize_voicebox(request: TTSRequest) -> bytes:
             pass
 
         # Fallback to native /generate endpoint in jamiepine/voicebox
+        # Note: jamiepine/voicebox validates language against supported ISO codes ("ms" for Malay/Indonesian)
+        vb_lang = "ms" if request.language in ("Auto", "id", "Indonesian") else request.language
         gen_res = client.post(
             f"{target_url}/generate",
             json={
                 "text": request.text.strip(),
                 "profile_id": profile_id,
-                "language": "id" if request.language == "Auto" else request.language,
+                "language": vb_lang,
                 "instruct": request.instruction,
             },
         )

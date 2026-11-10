@@ -62,62 +62,6 @@ export default async function handler(req, res) {
       }
     }
 
-    if (pathname === "/api/tts" && req.method === "GET") {
-      const q = urlObj.searchParams.get("text") || "";
-      const voiceboxUrl = (urlObj.searchParams.get("voicebox_url") || process.env.VOICEBOX_URL || "http://127.0.0.1:17493").replace(/\/+$/, "");
-      const profileId = urlObj.searchParams.get("profile_id") || "default";
-      if (!q.trim()) {
-        res.statusCode = 400;
-        return res.end("Missing text parameter");
-      }
-
-      // 1. Try Voicebox local/remote endpoint if reachable
-      try {
-        const vbRes = await fetch(`${voiceboxUrl}/v1/audio/speech`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "qwen",
-            input: q.trim(),
-            voice: profileId,
-            response_format: "wav",
-          }),
-          signal: AbortSignal.timeout(4500),
-        });
-        if (vbRes.ok) {
-          const audioBuf = await vbRes.arrayBuffer();
-          if (audioBuf.byteLength > 200) {
-            res.statusCode = 200;
-            res.setHeader("Content-Type", vbRes.headers.get("content-type") || "audio/wav");
-            res.setHeader("X-Voice-Provider", "voicebox");
-            return res.end(Buffer.from(audioBuf));
-          }
-        }
-      } catch {
-        // Fall through to stream TTS
-      }
-
-      // 2. Fallback to Indonesian TTS stream
-      try {
-        const cleanQuery = q.replace(/[*_#`~]/g, "").slice(0, 300);
-        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(cleanQuery)}&tl=id&client=tw-ob`;
-        const ttsRes = await fetch(ttsUrl, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-          },
-        });
-        if (ttsRes.ok) {
-          const audioBuf = await ttsRes.arrayBuffer();
-          res.statusCode = 200;
-          res.setHeader("Content-Type", "audio/mpeg");
-          res.setHeader("Cache-Control", "public, max-age=86400");
-          return res.end(Buffer.from(audioBuf));
-        }
-      } catch (err) {
-        console.error("TTS fetch error:", err);
-      }
-    }
-
     const worker = await getWorker();
 
     const headers = new Headers();
