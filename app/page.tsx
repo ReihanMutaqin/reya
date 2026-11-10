@@ -15,13 +15,6 @@ const DEFAULT_VOICEBOX_URL =
 const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
 const GEMINI_MODEL =
   process.env.NEXT_PUBLIC_GEMINI_MODEL || "gemini-flash-latest";
-const OPENROUTER_API_KEY = process.env.NEXT_PUBLIC_OPENROUTER_API_KEY || "";
-const FALLBACK_MODELS = [
-  "google/gemma-4-26b-a4b-it:free",
-  "google/gemma-4-31b-it:free",
-  "openai/gpt-oss-20b:free",
-  "openrouter/free",
-];
 
 type Message = { role: "user" | "assistant"; content: string };
 type VoiceboxProfile = {
@@ -1517,7 +1510,7 @@ export default function Home() {
         }
       }
 
-      // 2. Next.js Server Route (/api/chat)
+      // 2. Next.js Server Route (/api/chat -> Argon Gemini)
       if (!answer) {
         try {
           const response = await fetch("/api/chat", {
@@ -1538,59 +1531,11 @@ export default function Home() {
             }
           }
         } catch {
-          // Try OpenRouter or Local AI next
+          // Try Local AI proxy next
         }
       }
 
-      // 3. Direct OpenRouter Fallback
-      if (!answer && OPENROUTER_API_KEY) {
-        for (const modelToTry of FALLBACK_MODELS) {
-          if (answer) break;
-          try {
-            const response = await fetch(
-              "https://openrouter.ai/api/v1/chat/completions",
-              {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-                  "Content-Type": "application/json",
-                  "HTTP-Referer": "http://localhost:3088",
-                  "X-Title": "REYA Robot AI",
-                },
-                body: JSON.stringify({
-                  model: modelToTry,
-                  messages: [
-                    { role: "system", content: systemPrompt },
-                    ...nextMessages
-                      .slice(-8)
-                      .map((m) => ({ role: m.role, content: m.content })),
-                  ],
-                  max_tokens: 130,
-                  temperature: 0.8,
-                }),
-                signal: AbortSignal.timeout(12000),
-              },
-            );
-            if (response.ok) {
-              const data = (await response.json()) as {
-                choices?: Array<{ message?: { content?: string } }>;
-              };
-              const candidate = cleanResponse(
-                data.choices?.[0]?.message?.content ?? "",
-              );
-              if (candidate) {
-                answer = candidate;
-                setActiveBrainLabel(modelToTry);
-                break;
-              }
-            }
-          } catch {
-            // Try next fallback model
-          }
-        }
-      }
-
-      // 4. Local Python AI Backend
+      // 3. Local Python AI Backend (/api/chat -> Argon Gemini)
       if (!answer) {
         try {
           const response = await fetch(`${API_BASE}/api/chat`, {

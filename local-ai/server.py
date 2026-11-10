@@ -51,13 +51,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 VOICEBOX_URL = os.getenv("VOICEBOX_URL", "http://127.0.0.1:17493").rstrip("/")
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.getenv(
-    "OPENROUTER_MODEL", "google/gemma-4-26b-a4b-it:free"
-)
-
-OLLAMA_URL = os.getenv("REYA_OLLAMA_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.getenv("REYA_OLLAMA_MODEL", "qwen3:4b")
 TTS_MODEL = os.getenv(
     "REYA_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 )
@@ -151,25 +144,17 @@ async def fetch_voicebox_profiles(base_url: str = VOICEBOX_URL) -> list[dict[str
 
 @app.get("/health")
 async def health() -> dict[str, object]:
-    ollama_ok = await ollama_is_ready()
     vb_profiles = await fetch_voicebox_profiles()
     has_gemini = bool(GEMINI_API_KEY)
-    has_openrouter = bool(OPENROUTER_API_KEY)
-    active_model = (
-        GEMINI_MODEL
-        if has_gemini
-        else (OPENROUTER_MODEL if has_openrouter else OLLAMA_MODEL)
-    )
     return {
-        "ollama": ollama_ok or has_gemini or has_openrouter,
+        "ollama": has_gemini,
         "gemini": has_gemini,
-        "openrouter": has_openrouter,
         "voicebox": len(vb_profiles) > 0,
         "voicebox_profiles": vb_profiles,
         "natural_tts": package_available("supertonic"),
         "tts": package_available("qwen_tts"),
         "stt": package_available("faster_whisper"),
-        "model": active_model,
+        "model": GEMINI_MODEL,
     }
 
 
@@ -190,98 +175,50 @@ async def chat(request: ChatRequest) -> dict[str, str]:
         "3. Jawab singkat, jelas, dan ekspresif (1-2 kalimat pendek) agar enak didengar saat diucapkan dengan suara."
     )
 
-    if GEMINI_API_KEY:
-        history_lines = [
-            f"{'Pengguna' if m.role == 'user' else 'REYA'}: {m.content}"
-            for m in request.messages[-8:]
-        ]
-        prompt_text = f"{system_prompt}\n\nPercakapan:\n" + "\n".join(history_lines) + "\nREYA:"
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                response = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-goog-api-key": GEMINI_API_KEY,
-                    },
-                    json={
-                        "contents": [
-                            {
-                                "parts": [
-                                    {
-                                        "text": prompt_text,
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                )
-            if response.is_success:
-                data = response.json()
-                candidates = data.get("candidates") or []
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts") or []
-                    text_out = "".join(p.get("text", "") for p in parts).strip()
-                    if text_out:
-                        return {"message": text_out, "model": GEMINI_MODEL}
-        except Exception:
-            pass
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="GEMINI_API_KEY belum diatur di file .env",
+        )
 
-    if OPENROUTER_API_KEY:
-        try:
-            async with httpx.AsyncClient(timeout=25) as client:
-                response = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "http://localhost:3088",
-                        "X-Title": "REYA Robot AI",
-                    },
-                    json={
-                        "model": OPENROUTER_MODEL,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            *[item.model_dump() for item in request.messages[-10:]],
-                        ],
-                        "max_tokens": 160,
-                        "temperature": 0.75,
-                    },
-                )
-            if response.is_success:
-                data = response.json()
-                answer = (
-                    data.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                    .strip()
-                )
-                if answer:
-                    return {"message": answer, "model": OPENROUTER_MODEL}
-        except Exception:
-            pass
-
-    payload = {
-        "model": OLLAMA_MODEL,
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            *[item.model_dump() for item in request.messages[-10:]],
-        ],
-        "options": {"temperature": 0.72, "top_p": 0.9, "num_predict": 160},
-    }
+    history_lines = [
+        f"{'Pengguna' if m.role == 'user' else 'REYA'}: {m.content}"
+        for m in request.messages[-8:]
+    ]
+    prompt_text = f"{system_prompt}\n\nPercakapan:\n" + "\n".join(history_lines) + "\nREYA:"
     try:
-        async with httpx.AsyncClient(timeout=45) as client:
-            response = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-goog-api-key": GEMINI_API_KEY,
+                },
+                json={
+                    "contents": [
+                        {
+                            "parts": [
+                                {
+                                    "text": prompt_text,
+                                }
+                            ]
+                        }
+                    ]
+                },
+            )
         response.raise_for_status()
-        answer = response.json().get("message", {}).get("content", "").strip()
-        if not answer:
-            raise HTTPException(status_code=502, detail="AI tidak memberi jawaban")
-        return {"message": answer, "model": OLLAMA_MODEL}
+        data = response.json()
+        candidates = data.get("candidates") or []
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts") or []
+            text_out = "".join(p.get("text", "") for p in parts).strip()
+            if text_out:
+                return {"message": text_out, "model": GEMINI_MODEL}
+        raise HTTPException(status_code=502, detail="Argon Gemini tidak memberi jawaban")
     except httpx.HTTPError as error:
         raise HTTPException(
             status_code=503,
-            detail="AI belum siap. Periksa koneksi Gemini API, OpenRouter, atau Ollama.",
+            detail="Gagal menghubungi Argon Gemini API.",
         ) from error
 
 
