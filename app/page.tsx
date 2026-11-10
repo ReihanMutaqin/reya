@@ -1505,6 +1505,7 @@ function RobotCRTUnit({
   musicActive = false,
   singingActive = false,
   singingLyric = "",
+  singingSongTitle = "",
   lastActivity = 0,
   onPoke,
   onSingClick,
@@ -1516,6 +1517,7 @@ function RobotCRTUnit({
   musicActive?: boolean;
   singingActive?: boolean;
   singingLyric?: string;
+  singingSongTitle?: string;
   lastActivity?: number;
   onPoke?: (kind?: RobotInteractionType) => void;
   onSingClick?: () => void;
@@ -1736,7 +1738,7 @@ function RobotCRTUnit({
     thoughtBubble = "Hmm, mikir bentar...";
   } else if (singingActive) {
     statusLabel = "SING // KONSER KARAOKE ENCHOR 🎤";
-    thoughtBubble = singingLyric ? `🎤 ${singingLyric}` : "🎤 La la la~ ♫";
+    thoughtBubble = singingLyric || "La la la~ ♫";
   } else if (speaking) {
     statusLabel = "OUT // SUARA CERIA";
     thoughtBubble = "Ngobrol bareng ♪";
@@ -1803,6 +1805,51 @@ function RobotCRTUnit({
         isDancing ? "is-dancing" : ""
       } ${reaction ? `reaction-${reaction}` : `idle-${idleState}`}`}
     >
+      {/* Floating Fluffy Cloud Bubble for Karaoke Lyrics & Cute Thoughts */}
+      {thoughtBubble && (
+        <div
+          className={`robot-cloud-bubble is-${idleState} ${
+            singingActive ? "is-singing-cloud" : ""
+          } ${reaction ? `is-react-${reaction}` : ""}`}
+          aria-live="polite"
+        >
+          <span className="cloud-trail-dot dot-1" aria-hidden="true" />
+          <span className="cloud-trail-dot dot-2" aria-hidden="true" />
+          <span className="cloud-lobe lobe-left" aria-hidden="true" />
+          <span className="cloud-lobe lobe-mid" aria-hidden="true" />
+          <span className="cloud-lobe lobe-right" aria-hidden="true" />
+
+          {singingActive ? (
+            <div className="cloud-singing-stage">
+              <div className="cloud-singing-header">
+                <span className="cloud-eq-bars" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <span className="cloud-song-tag">
+                  {singingSongTitle || "PANGGUNG KARAOKE REYA"}
+                </span>
+                <span className="cloud-note-badge" aria-hidden="true">
+                  ♪ ♫
+                </span>
+              </div>
+              <div key={thoughtBubble} className="cloud-lyric-text">
+                <span className="cloud-mic-icon" aria-hidden="true">
+                  🎤
+                </span>{" "}
+                <span>{thoughtBubble}</span>
+              </div>
+            </div>
+          ) : (
+            <div key={thoughtBubble} className="cloud-thought-text">
+              <span>{thoughtBubble}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Top Robot Head Accessories: Cute Cat-Robot Ears & Glowing Antenna */}
       <div
         className="robot-head-top"
@@ -1849,16 +1896,6 @@ function RobotCRTUnit({
         }}
       >
         <span className="crt-visor-glare" aria-hidden="true" />
-
-        {thoughtBubble && (
-          <div
-            className={`crt-thought-bubble is-${idleState} ${
-              reaction ? `is-react-${reaction}` : ""
-            }`}
-          >
-            <span>{thoughtBubble}</span>
-          </div>
-        )}
 
         {idleState === "sleep" && (
           <>
@@ -4484,6 +4521,11 @@ export default function Home() {
               musicActive={musicPlaying || playingSong || playingMelody}
               singingActive={singingMode || enchorAudioPlaying}
               singingLyric={singingLyric}
+              singingSongTitle={
+                enchorSelected
+                  ? `${enchorSelected.name} · ${enchorSelected.artist}`
+                  : activeSong?.title ?? ""
+              }
               lastActivity={lastActivity}
               onPoke={handleRobotPoke}
               onSingClick={() => {
