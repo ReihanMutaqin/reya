@@ -3087,14 +3087,15 @@ export default function Home() {
 
   const activeVoiceLabel = useMemo(() => {
     if (voiceEngine === "voicebox") {
-      const found = voiceboxProfiles.find((p) => p.id === voiceboxProfileId);
-      return found
-        ? `Voicebox · ${found.name}`
-        : voiceboxOnline
-          ? `Voicebox · ${voiceboxProfileId}`
-          : "Voicebox · Auto Indo";
+      if (voiceboxOnline) {
+        const found = voiceboxProfiles.find((p) => p.id === voiceboxProfileId);
+        return found
+          ? `Voicebox · ${found.name}`
+          : `Voicebox · ${voiceboxProfileId}`;
+      }
+      return "Argon Cloud · Aoede (Ceria)";
     }
-    if (voiceEngine === "supertonic") return `Supertonic · ${voiceProfile}`;
+    if (voiceEngine === "supertonic") return `Natural Indo · ${voiceProfile}`;
     if (voiceEngine === "qwen")
       return `Qwen · ${voiceProfile.replace("clone:", "")}`;
     return "Browser Speech";
@@ -3980,6 +3981,16 @@ export default function Home() {
 
             {voiceEngine === "voicebox" && (
               <div className="voicebox-panel">
+                <div className="cloud-status-card">
+                  <div className="cloud-status-header">
+                    <span className="status-led online" />
+                    <strong>CLOUD READY // ARGON GEMINI NEURAL AKTIF (VERCEL NATIVE)</strong>
+                  </div>
+                  <p>
+                    Aplikasi ini berjalan 100% di cloud Vercel! REYA otomatis berbicara menggunakan suara perempuan ceria (Aoede) lewat API Gemini tanpa perlu instalasi atau server lokal.
+                  </p>
+                </div>
+
                 <div className="voicebox-status-row">
                   <div className="telemetry-item">
                     <span
@@ -3987,15 +3998,19 @@ export default function Home() {
                     />
                     <strong className="mono">
                       {voiceboxOnline
-                        ? "VOICEBOX TERHUBUNG (:17493)"
-                        : "VOICEBOX LOKAL OFFLINE (ARGON NEURAL AUDIO AKTIF)"}
+                        ? "DESKTOP VOICEBOX TERHUBUNG (:17493)"
+                        : "DESKTOP VOICEBOX (OPSIONAL / PC LOKAL)"}
                     </strong>
                   </div>
                   <span className="module-id">jamiepine/voicebox</span>
                 </div>
 
+                <p className="voicebox-desc">
+                  Koneksi Voicebox di bawah bersifat opsional untuk kloning suara di PC lokal. Di Vercel, REYA otomatis aktif menggunakan suara Cloud Neural ceria di atas.
+                </p>
+
                 <div className="field-group">
-                  <label htmlFor="vb-url-input">ENDPOINT SERVER VOICEBOX</label>
+                  <label htmlFor="vb-url-input">ENDPOINT SERVER VOICEBOX (OPSIONAL)</label>
                   <div className="url-input-row">
                     <input
                       id="vb-url-input"

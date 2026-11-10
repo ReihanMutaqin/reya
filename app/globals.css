@@ -1439,6 +1439,40 @@ button {
   flex-wrap: wrap;
 }
 
+.cloud-status-card {
+  background: var(--bg-chassis);
+  border: 1.5px solid var(--signal-green);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.cloud-status-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--signal-green);
+  letter-spacing: 0.04em;
+}
+
+.cloud-status-card p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.voicebox-desc {
+  margin: -4px 0 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
 .url-input-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1518,7 +1552,41 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .url-input-row {
+  .cloud-status-card {
+  background: var(--bg-chassis);
+  border: 1.5px solid var(--signal-green);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.cloud-status-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--signal-green);
+  letter-spacing: 0.04em;
+}
+
+.cloud-status-card p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.voicebox-desc {
+  margin: -4px 0 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.url-input-row {
     grid-template-columns: 1fr;
   }
 
