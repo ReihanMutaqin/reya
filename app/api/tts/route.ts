@@ -10,6 +10,7 @@ const GEMINI_TTS_MODELS = [
   "gemini-3.8-flash-lite-tts",
   "gemini-3.1-flash-tts-preview",
   "gemini-3.8-flash-tts",
+  "gemini-2.5-flash-preview-tts",
 ];
 
 const exhaustedModels = new Map<string, number>();
@@ -237,20 +238,25 @@ async function tryVoiceboxCloudNeuralTTS(
   text: string,
   profileOrSpeaker?: string,
 ): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
+  // Primary: the original warm Gemini "Aoede (Ceria)" voice REYA launched with
+  const natural = await tryGeminiNeuralTTS(text, profileOrSpeaker);
+  if (natural) return natural;
+
   const norm = (profileOrSpeaker || "").toLowerCase().trim();
 
+  // Fallback: Gadis Neural at its natural pitch (pitch shifting made it sound robotic)
   let voice = "id-ID-GadisNeural";
-  let rate = "+6%";
-  let pitch = "+4Hz";
+  let rate = "+0%";
+  let pitch = "+0Hz";
 
   if (norm.includes("imut") || norm.includes("cute") || norm === "f2") {
     voice = "id-ID-GadisNeural";
-    rate = "+8%";
-    pitch = "+6Hz";
+    rate = "+2%";
+    pitch = "+0Hz";
   } else if (norm.includes("kalem") || norm === "f1" || norm.includes("zephyr")) {
     voice = "id-ID-GadisNeural";
-    rate = "+2%";
-    pitch = "+1Hz";
+    rate = "-4%";
+    pitch = "+0Hz";
   } else if (norm.includes("ardi") || norm === "m1") {
     voice = "id-ID-ArdiNeural";
     rate = "+4%";
