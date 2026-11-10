@@ -12,6 +12,8 @@ export type SongNote = {
   id: ScaleNoteId;
   lyric: string;
   delay: number; // millisecond offset from song start
+  freq?: number;
+  dur?: number;
 };
 
 export type Song = {

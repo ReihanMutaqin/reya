@@ -1105,6 +1105,102 @@ function startSustainedVoice(
   };
 }
 
+// Kawaii Robot Singing Vocal Formant Synthesizer ("La~ Na~ Mi~ Lu~" cute vowel voice)
+function playKawaiiVocalNote(
+  ctx: AudioContext,
+  dest: AudioNode,
+  freq: number,
+  durSec = 0.42,
+  vowelIndex = 0,
+  pan = 0,
+) {
+  const t = ctx.currentTime;
+  const dur = Math.max(0.24, Math.min(1.4, durSec));
+
+  // Formant frequencies [F1, F2] for cute bright singing vowels: /a/, /i/, /u/, /e/, /o/
+  const formants: [number, number][] = [
+    [820, 1680], // La (/a/)
+    [380, 2320], // Mi (/i/)
+    [410, 1020], // Lu (/u/)
+    [540, 1960], // Ne (/e/)
+    [520, 1080], // No (/o/)
+  ];
+  const [f1Freq, f2Freq] = formants[Math.abs(vowelIndex) % formants.length];
+
+  // Keep pitch in a cute bright female chibi singing register (C4..E5)
+  let vocalFreq = freq;
+  while (vocalFreq < 260) vocalFreq *= 2;
+  while (vocalFreq > 660) vocalFreq *= 0.5;
+
+  const panner = ctx.createStereoPanner();
+  panner.pan.setValueAtTime(pan, t);
+
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0.0001, t);
+  // Soft syllable consonant attack ("l"/"n") then sustain then gentle release
+  env.gain.linearRampToValueAtTime(0.34, t + 0.032);
+  env.gain.exponentialRampToValueAtTime(0.24, t + dur * 0.72);
+  env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.08);
+
+  // Expressive singing vibrato LFO (5.6 Hz)
+  const vibOsc = ctx.createOscillator();
+  const vibGain = ctx.createGain();
+  vibOsc.frequency.setValueAtTime(5.6, t);
+  vibGain.gain.setValueAtTime(0.2, t);
+  vibGain.gain.linearRampToValueAtTime(4.8, t + Math.min(0.18, dur * 0.5));
+  vibOsc.connect(vibGain);
+
+  // Dual vocal cord oscillators (sawtooth glottal source + sweet octave triangle)
+  const oscMain = ctx.createOscillator();
+  oscMain.type = "sawtooth";
+  oscMain.frequency.setValueAtTime(vocalFreq * 0.97, t);
+  oscMain.frequency.exponentialRampToValueAtTime(vocalFreq, t + 0.028);
+
+  const oscSub = ctx.createOscillator();
+  oscSub.type = "triangle";
+  oscSub.frequency.setValueAtTime(vocalFreq * 2, t);
+  const subGain = ctx.createGain();
+  subGain.gain.setValueAtTime(0.32, t);
+
+  vibGain.connect(oscMain.frequency);
+  vibGain.connect(oscSub.frequency);
+
+  // Parallel Formant Bandpass Filters F1 & F2
+  const f1 = ctx.createBiquadFilter();
+  f1.type = "bandpass";
+  f1.frequency.setValueAtTime(f1Freq, t);
+  f1.Q.setValueAtTime(4.5, t);
+  const f1Gain = ctx.createGain();
+  f1Gain.gain.setValueAtTime(0.85, t);
+
+  const f2 = ctx.createBiquadFilter();
+  f2.type = "bandpass";
+  f2.frequency.setValueAtTime(f2Freq, t);
+  f2.Q.setValueAtTime(5.5, t);
+  const f2Gain = ctx.createGain();
+  f2Gain.gain.setValueAtTime(0.65, t);
+
+  oscMain.connect(f1);
+  oscMain.connect(f2);
+  oscSub.connect(subGain);
+  subGain.connect(f1);
+  subGain.connect(f2);
+
+  f1.connect(f1Gain);
+  f2.connect(f2Gain);
+  f1Gain.connect(env);
+  f2Gain.connect(env);
+  env.connect(panner);
+  panner.connect(dest);
+
+  vibOsc.start(t);
+  oscMain.start(t);
+  oscSub.start(t);
+  vibOsc.stop(t + dur + 0.1);
+  oscMain.stop(t + dur + 0.1);
+  oscSub.stop(t + dur + 0.1);
+}
+
 function playNote(
   ctx: AudioContext,
   dest: AudioNode,
@@ -1407,16 +1503,22 @@ function RobotCRTUnit({
   thinking,
   mood,
   musicActive = false,
+  singingActive = false,
+  singingLyric = "",
   lastActivity = 0,
   onPoke,
+  onSingClick,
 }: {
   speaking: boolean;
   listening: boolean;
   thinking: boolean;
   mood: number;
   musicActive?: boolean;
+  singingActive?: boolean;
+  singingLyric?: string;
   lastActivity?: number;
   onPoke?: (kind?: RobotInteractionType) => void;
+  onSingClick?: () => void;
 }) {
   const [idleSeconds, setIdleSeconds] = useState(0);
   const [blinking, setBlinking] = useState(false);
@@ -1618,10 +1720,10 @@ function RobotCRTUnit({
     rubAccumRef.current.lastX = e.clientX;
   };
 
-  const isDancing = reaction === "dance" || musicActive;
-  const showHearts = reaction === "headpat" || reaction === "tickle";
-  const showNotes = idleState === "hum" || isDancing || speaking;
-  const showSparkles = reaction === "snack" || reaction === "poke";
+  const isDancing = reaction === "dance" || musicActive || singingActive;
+  const showHearts = reaction === "headpat" || reaction === "tickle" || singingActive;
+  const showNotes = idleState === "hum" || isDancing || speaking || singingActive;
+  const showSparkles = reaction === "snack" || reaction === "poke" || singingActive;
 
   let statusLabel = "STBY // REYA SIAP";
   let thoughtBubble = "";
@@ -1632,6 +1734,9 @@ function RobotCRTUnit({
   } else if (thinking) {
     statusLabel = "PROC // GEMINI FLASH";
     thoughtBubble = "Hmm, mikir bentar...";
+  } else if (singingActive) {
+    statusLabel = "SING // KONSER KARAOKE ENCHOR 🎤";
+    thoughtBubble = singingLyric ? `🎤 ${singingLyric}` : "🎤 La la la~ ♫";
   } else if (speaking) {
     statusLabel = "OUT // SUARA CERIA";
     thoughtBubble = "Ngobrol bareng ♪";
@@ -1915,6 +2020,11 @@ function RobotCRTUnit({
           {reaction === "snack" && (
             <span className="robot-snack-item">⚡</span>
           )}
+          {singingActive && (
+            <span className="robot-mic-item" title="Mikrofon Konser REYA">
+              🎤
+            </span>
+          )}
           <span className="robot-paw right-paw" />
         </div>
       </div>
@@ -1951,11 +2061,14 @@ function RobotCRTUnit({
         </button>
         <button
           type="button"
-          className={`robot-mini-btn ${reaction === "dance" ? "active" : ""}`}
-          onClick={() => triggerReaction("dance", 3400)}
-          title="Ajak REYA joget"
+          className={`robot-mini-btn ${singingActive ? "active" : ""}`}
+          onClick={() => {
+            if (onSingClick) onSingClick();
+            else triggerReaction("dance", 3400);
+          }}
+          title="Ajak REYA bernyanyi dari Enchor.us!"
         >
-          ♫ Joget
+          🎤 Nyanyi
         </button>
       </div>
 
@@ -2048,6 +2161,43 @@ export default function Home() {
   const [songSearchInput, setSongSearchInput] = useState("");
   const songTimersRef = useRef<number[]>([]);
   const [showMatrixView, setShowMatrixView] = useState(false);
+
+  // Enchor.us Karaoke & Cute Singing State
+  const [enchorQuery, setEnchorQuery] = useState("Bohemian Rhapsody");
+  const [enchorLoading, setEnchorLoading] = useState(false);
+  const [enchorResults, setEnchorResults] = useState<
+    Array<{
+      chartId: number;
+      name: string;
+      artist: string;
+      album: string;
+      genre: string;
+      year: string;
+      charter: string;
+      md5: string;
+      albumArtUrl: string | null;
+      songLengthMs: number;
+      previewStartMs: number;
+      hasLyrics: boolean;
+      hasVocals: boolean;
+    }>
+  >([]);
+  const [enchorSelected, setEnchorSelected] = useState<{
+    name: string;
+    artist: string;
+    album: string;
+    genre: string;
+    charter: string;
+    md5: string;
+    albumArtUrl: string | null;
+    audioUrl: string | null;
+    vocalAudioUrl: string | null;
+    lyrics: Array<{ timeMs: number; text: string }>;
+  } | null>(null);
+  const [singingMode, setSingingMode] = useState(false);
+  const [singingLyric, setSingingLyric] = useState("");
+  const [enchorAudioPlaying, setEnchorAudioPlaying] = useState(false);
+  const enchorAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -2345,6 +2495,13 @@ export default function Home() {
   const stopSong = useCallback(() => {
     songTimersRef.current.forEach((t) => window.clearTimeout(t));
     songTimersRef.current = [];
+    if (enchorAudioRef.current) {
+      enchorAudioRef.current.pause();
+      enchorAudioRef.current.currentTime = 0;
+    }
+    setEnchorAudioPlaying(false);
+    setSingingMode(false);
+    setSingingLyric("");
     setPlayingSong(false);
     setActiveSong(null);
   }, []);
@@ -2564,7 +2721,13 @@ export default function Home() {
   }, [ensureMusicAudio, playingMelody, showToast]);
 
   const playSong = useCallback(
-    (song: Song) => {
+    (
+      song: Song,
+      options?: {
+        sing?: boolean;
+        lyrics?: Array<{ timeMs: number; text: string }>;
+      },
+    ) => {
       const audio = ensureMusicAudio();
       if (!audio) return;
       recordActivity();
@@ -2578,35 +2741,70 @@ export default function Home() {
       songTimersRef.current.forEach((t) => window.clearTimeout(t));
       songTimersRef.current = [];
 
+      const shouldSing = Boolean(options?.sing);
+      setSingingMode(shouldSing);
       setActiveSong(song);
       setPlayingSong(true);
-      showToast(`Memainkan lagu: ${song.title} ♪`);
+      showToast(
+        shouldSing
+          ? `🎤 REYA menyanyikan: ${song.title} ♪`
+          : `Memainkan lagu: ${song.title} ♪`,
+      );
+
+      if (options?.lyrics && options.lyrics.length > 0) {
+        setSingingLyric(options.lyrics[0].text);
+        options.lyrics.forEach((line) => {
+          const lTimer = window.setTimeout(() => {
+            setSingingLyric(line.text);
+          }, Math.max(0, line.timeMs));
+          songTimersRef.current.push(lTimer);
+        });
+      }
 
       song.notes.forEach((item, index) => {
         const timer = window.setTimeout(() => {
-          const note = SCALE_NOTES.find((n) => n.id === item.id);
-          if (note && musicPlayingRef.current) {
+          const noteId = item.id === "do_prime" ? "do_high" : item.id;
+          const note =
+            SCALE_NOTES.find((n) => n.id === noteId) ?? SCALE_NOTES[0];
+          const pitchFreq = item.freq ?? note.freq;
+
+          if (musicPlayingRef.current) {
             playNote(
               audio.context,
               audio.master,
-              note.freq,
+              pitchFreq,
               musicModeRef.current,
               0.55,
-              0,
+              shouldSing ? -0.15 : 0,
               false,
             );
+            if (shouldSing) {
+              playKawaiiVocalNote(
+                audio.context,
+                audio.master,
+                pitchFreq,
+                item.dur ?? 0.38,
+                index,
+                0.15,
+              );
+            }
             setActiveScaleNoteId(note.id);
+            if (!options?.lyrics?.length && item.lyric) {
+              setSingingLyric(item.lyric);
+            }
             setLastPlayedLabel(
-              `${song.title}: "${item.lyric}" (${note.name} / ${note.notation})`,
+              `${song.title}: "${item.lyric}" (${note.name} / ${Math.round(pitchFreq)} Hz)`,
             );
           }
           if (index === song.notes.length - 1) {
             const endTimer = window.setTimeout(() => {
               setPlayingSong(false);
+              setSingingMode(false);
+              setSingingLyric("");
               setActiveSong(null);
               setActiveScaleNoteId(null);
-              setLastPlayedLabel(`Lagu ${song.title} selesai dimainkan`);
-            }, 1200);
+              setLastPlayedLabel(`Lagu ${song.title} selesai dinyanyikan`);
+            }, 1400);
             songTimersRef.current.push(endTimer);
           }
         }, item.delay);
@@ -2615,6 +2813,152 @@ export default function Home() {
     },
     [ensureMusicAudio, recordActivity, showToast],
   );
+
+  const searchAndSingEnchor = useCallback(
+    async (
+      customQuery?: string,
+      customMd5?: string,
+      playOriginalAudio = false,
+    ): Promise<{ title: string; artist: string } | null> => {
+      const q = (customQuery ?? enchorQuery).trim() || "Bohemian Rhapsody";
+      setEnchorLoading(true);
+      try {
+        const url = `/api/enchor?q=${encodeURIComponent(q)}${
+          customMd5 ? `&md5=${encodeURIComponent(customMd5)}` : ""
+        }`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(8500) });
+        if (!res.ok) {
+          showToast("Gagal menghubungi API Enchor.us, menggunakan melodi lokal.");
+          return null;
+        }
+        const data = (await res.json()) as {
+          results?: typeof enchorResults;
+          selected?: {
+            name: string;
+            artist: string;
+            album: string;
+            genre: string;
+            charter: string;
+            md5: string;
+            albumArtUrl: string | null;
+            audioUrl: string | null;
+            vocalAudioUrl: string | null;
+            lyrics: Array<{ timeMs: number; text: string }>;
+            notes: Array<{
+              id: string;
+              dur: number;
+              gap: number;
+              freq?: number;
+              lyric?: string;
+            }>;
+          };
+        };
+
+        if (data.results) setEnchorResults(data.results);
+        if (!data.selected) {
+          showToast(`Lagu "${q}" tidak ditemukan di Enchor.us.`);
+          return null;
+        }
+
+        const sel = data.selected;
+        setEnchorSelected({
+          name: sel.name,
+          artist: sel.artist,
+          album: sel.album,
+          genre: sel.genre,
+          charter: sel.charter,
+          md5: sel.md5,
+          albumArtUrl: sel.albumArtUrl,
+          audioUrl: sel.audioUrl,
+          vocalAudioUrl: sel.vocalAudioUrl,
+          lyrics: sel.lyrics ?? [],
+        });
+
+        // Build playable Song with exact Enchor vocal/instrument pitches
+        let currentDelay = 0;
+        const cuteSyllables = ["La~", "Na~", "Mi~", "Lu~", "La~", "Du~"];
+        const builtNotes = (sel.notes ?? []).map((n, idx) => {
+          const noteObj = {
+            id: (n.id === "do_high" ? "do_prime" : n.id) as Song["notes"][0]["id"],
+            lyric: n.lyric || cuteSyllables[idx % cuteSyllables.length],
+            delay: currentDelay,
+            freq: n.freq,
+            dur: n.dur,
+          };
+          currentDelay += n.gap || 320;
+          return noteObj;
+        });
+
+        const enchorSong: Song = {
+          id: `enchor-${sel.md5}`,
+          title: `${sel.name} (${sel.artist})`,
+          category: "Populer",
+          keywords: [sel.name.toLowerCase(), sel.artist.toLowerCase()],
+          notes: builtNotes,
+        };
+
+        playSong(enchorSong, {
+          sing: true,
+          lyrics: sel.lyrics,
+        });
+
+        if (playOriginalAudio && (sel.vocalAudioUrl || sel.audioUrl)) {
+          const streamUrl = sel.vocalAudioUrl || sel.audioUrl!;
+          if (!enchorAudioRef.current) {
+            enchorAudioRef.current = new Audio();
+          }
+          enchorAudioRef.current.src = streamUrl;
+          enchorAudioRef.current.volume = 0.85;
+          enchorAudioRef.current.onended = () => setEnchorAudioPlaying(false);
+          void enchorAudioRef.current
+            .play()
+            .then(() => setEnchorAudioPlaying(true))
+            .catch(() => setEnchorAudioPlaying(false));
+        }
+
+        return { title: sel.name, artist: sel.artist };
+      } catch {
+        showToast("Koneksi Enchor.us sedang sibuk.");
+        return null;
+      } finally {
+        setEnchorLoading(false);
+      }
+    },
+    [enchorQuery, playSong, showToast],
+  );
+
+  const toggleEnchorOriginalAudio = useCallback(() => {
+    if (!enchorSelected?.audioUrl && !enchorSelected?.vocalAudioUrl) {
+      showToast("Pilih atau cari lagu Enchor terlebih dahulu.");
+      return;
+    }
+    if (enchorAudioPlaying && enchorAudioRef.current) {
+      enchorAudioRef.current.pause();
+      setEnchorAudioPlaying(false);
+      return;
+    }
+    const streamUrl = enchorSelected.vocalAudioUrl || enchorSelected.audioUrl!;
+    if (!enchorAudioRef.current) {
+      enchorAudioRef.current = new Audio();
+    }
+    if (enchorAudioRef.current.src !== window.location.origin + streamUrl) {
+      enchorAudioRef.current.src = streamUrl;
+    }
+    enchorAudioRef.current.volume = 0.85;
+    enchorAudioRef.current.onended = () => setEnchorAudioPlaying(false);
+    void enchorAudioRef.current
+      .play()
+      .then(() => {
+        setEnchorAudioPlaying(true);
+        setSingingMode(true);
+        showToast(
+          `🎧 Memutar audio asli Enchor: ${enchorSelected.name} - ${enchorSelected.artist}`,
+        );
+      })
+      .catch(() => {
+        showToast("Audio stream ini belum siap diputar di browser.");
+      });
+  }, [enchorAudioPlaying, enchorSelected, showToast]);
 
   const playKartiniSong = useCallback(() => {
     if (playingSong && activeSong?.id === "kartini") {
@@ -3278,11 +3622,65 @@ export default function Home() {
       const fullPrompt = `${systemPrompt}\n\nPercakapan:\n${historyText}\nREYA:`;
 
       const norm = text.toLowerCase();
+      const wantsSingOrEnchor =
+        norm.includes("nyanyi") ||
+        norm.includes("karaoke") ||
+        norm.includes("enchor") ||
+        norm.includes("encore");
+
+      // 0. If user asks REYA to sing or search Enchor.us
+      if (wantsSingOrEnchor) {
+        const cleanedQuery = text
+          .replace(
+            /\b(tolong|coba|bisa|ga|ngga|dong|ya|yuk|reya|nyanyi|nyanyikan|menyanyi|karaoke|lagu|dari|di|enchor|encore)\b/gi,
+            " ",
+          )
+          .replace(/\s+/g, " ")
+          .trim();
+
+        const matchedLocal = cleanedQuery ? findSong(cleanedQuery) : null;
+        if (matchedLocal && !norm.includes("enchor")) {
+          answer = `Asyik! Aku nyanyikan lagu ${matchedLocal.title} dengan suara vokalku sekarang ya! La la la~ 🎤♪`;
+          const assistantMessage: Message = {
+            role: "assistant",
+            content: answer,
+          };
+          setMessages((current) => [...current, assistantMessage]);
+          setThinking(false);
+          let started = false;
+          const trigger = () => {
+            if (!started) {
+              started = true;
+              playSong(matchedLocal, { sing: true });
+            }
+          };
+          void speak(answer, trigger);
+          window.setTimeout(trigger, 3800);
+          return;
+        }
+
+        const queryToUse = cleanedQuery || enchorQuery || "Bohemian Rhapsody";
+        setEnchorQuery(queryToUse);
+        answer = `Yey! Aku carikan lagu "${queryToUse}" langsung dari Enchor.us dan aku nyanyikan buat kamu sekarang ya! 🎤♫`;
+        const assistantMessage: Message = { role: "assistant", content: answer };
+        setMessages((current) => [...current, assistantMessage]);
+        setThinking(false);
+        let started = false;
+        const trigger = () => {
+          if (!started) {
+            started = true;
+            void searchAndSingEnchor(queryToUse);
+          }
+        };
+        void speak(answer, trigger);
+        window.setTimeout(trigger, 3800);
+        return;
+      }
 
       // 1. Check if user asked for a known song in the rich catalog
       const matchedCatalogSong = findSong(norm);
       if (matchedCatalogSong) {
-        answer = `Tentu! Ini lagu ${matchedCatalogSong.title} yang indah, aku mainkan pakai instrumen untukmu sekarang ya! ♪`;
+        answer = `Tentu! Ini lagu ${matchedCatalogSong.title} yang indah, aku mainkan dan nyanyikan untukmu sekarang ya! ♪`;
         const assistantMessage: Message = { role: "assistant", content: answer };
         setMessages((current) => [...current, assistantMessage]);
         setThinking(false);
@@ -3290,7 +3688,7 @@ export default function Home() {
         const triggerSong = () => {
           if (!started) {
             started = true;
-            playSong(matchedCatalogSong);
+            playSong(matchedCatalogSong, { sing: true });
           }
         };
         void speak(answer, triggerSong);
@@ -3469,11 +3867,13 @@ export default function Home() {
       void speak(answer);
     },
     [
+      enchorQuery,
       input,
       messages,
       playExampleMelody,
       playSong,
       recordActivity,
+      searchAndSingEnchor,
       speak,
       thinking,
     ],
@@ -4082,8 +4482,17 @@ export default function Home() {
               thinking={thinking}
               mood={mood}
               musicActive={musicPlaying || playingSong || playingMelody}
+              singingActive={singingMode || enchorAudioPlaying}
+              singingLyric={singingLyric}
               lastActivity={lastActivity}
               onPoke={handleRobotPoke}
+              onSingClick={() => {
+                if (singingMode || enchorAudioPlaying) {
+                  stopSong();
+                } else {
+                  void searchAndSingEnchor(enchorQuery || "Bohemian Rhapsody");
+                }
+              }}
             />
 
             <div className="robot-info-column">
@@ -4175,9 +4584,9 @@ export default function Home() {
 
             <div className="prompt-strip">
               {[
-                "Mainkan lagu Balonku Ada Lima",
-                "Mainkan lagu Ibu Kita Kartini",
-                "Cari lagu Laskar Pelangi",
+                "Nyanyikan lagu Bohemian Rhapsody dari Enchor",
+                "Nyanyi lagu Wildflower dari Enchor",
+                "Nyanyikan lagu Ibu Kita Kartini",
                 "Bagaimana cara main musik pakai tangan?",
               ].map((suggestion) => (
                 <button
@@ -4680,6 +5089,193 @@ export default function Home() {
                           : "Putar Ibu Kita Kartini"}
                       </span>
                     </button>
+                  </div>
+
+                  {/* STUDIO NYANYI & KARAOKE ENCHOR.US (LIVE API) */}
+                  <div className="enchor-stage-box">
+                    <div className="enchor-stage-header">
+                      <div className="enchor-stage-title">
+                        <span className="enchor-mic-badge">🎤</span>
+                        <div>
+                          <strong>Panggung Nyanyi &amp; Karaoke Enchor.us</strong>
+                          <small className="mono" style={{ display: "block", fontSize: "10px", color: "var(--ink-muted)" }}>
+                            API: api.enchor.us · Vokal Synth Lucu + Lirik &amp; Audio Asli
+                          </small>
+                        </div>
+                      </div>
+                      {(singingMode || enchorAudioPlaying) && (
+                        <button
+                          type="button"
+                          className="hw-button primary"
+                          style={{ minHeight: "32px", padding: "0 10px", fontSize: "11px" }}
+                          onClick={stopSong}
+                        >
+                          <span>⏹ Hentikan Nyanyi</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (enchorQuery.trim()) {
+                          void searchAndSingEnchor(enchorQuery.trim());
+                        }
+                      }}
+                      style={{ display: "flex", gap: "6px", marginTop: "8px" }}
+                    >
+                      <input
+                        type="text"
+                        className="field-input"
+                        value={enchorQuery}
+                        onChange={(e) => setEnchorQuery(e.target.value)}
+                        placeholder="Cari lagu di Enchor.us (Queen, Billie Eilish, Creep, Dragonforce)..."
+                        style={{ flex: 1, minHeight: "38px", fontSize: "12px" }}
+                      />
+                      <button
+                        type="submit"
+                        className="hw-button primary"
+                        disabled={enchorLoading}
+                        style={{ minHeight: "38px", padding: "0 14px", whiteSpace: "nowrap" }}
+                      >
+                        <span>
+                          {enchorLoading ? "Mencari..." : "🎤 Cari & Nyanyi"}
+                        </span>
+                      </button>
+                    </form>
+
+                    <div className="enchor-quick-chips">
+                      {[
+                        "Bohemian Rhapsody",
+                        "Wildflower",
+                        "Creep",
+                        "Dragonforce",
+                        "Hatsune Miku",
+                      ].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          className="enchor-chip"
+                          onClick={() => {
+                            setEnchorQuery(preset);
+                            void searchAndSingEnchor(preset);
+                          }}
+                        >
+                          ♪ {preset}
+                        </button>
+                      ))}
+                    </div>
+
+                    {enchorSelected && (
+                      <div className="enchor-now-playing">
+                        <div className="enchor-song-meta">
+                          {enchorSelected.albumArtUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={enchorSelected.albumArtUrl}
+                              alt={enchorSelected.name}
+                              className="enchor-album-art"
+                            />
+                          ) : (
+                            <div className="enchor-album-placeholder">🎤</div>
+                          )}
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <strong
+                              style={{
+                                display: "block",
+                                fontSize: "13px",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {enchorSelected.name}
+                            </strong>
+                            <span
+                              style={{
+                                display: "block",
+                                fontSize: "11px",
+                                color: "var(--ink-muted)",
+                              }}
+                            >
+                              {enchorSelected.artist}
+                              {enchorSelected.charter
+                                ? ` · Charter: ${enchorSelected.charter}`
+                                : ""}
+                            </span>
+                            <div style={{ display: "flex", gap: "6px", marginTop: "6px", flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                className={`hw-button ${singingMode && !enchorAudioPlaying ? "primary active-green" : ""}`}
+                                style={{ minHeight: "30px", padding: "0 10px", fontSize: "11px" }}
+                                onClick={() =>
+                                  void searchAndSingEnchor(
+                                    enchorSelected.name,
+                                    enchorSelected.md5,
+                                    false,
+                                  )
+                                }
+                              >
+                                <span>🎤 Vokal Lucu REYA</span>
+                              </button>
+                              {(enchorSelected.audioUrl ||
+                                enchorSelected.vocalAudioUrl) && (
+                                <button
+                                  type="button"
+                                  className={`hw-button ${enchorAudioPlaying ? "primary active-green" : ""}`}
+                                  style={{ minHeight: "30px", padding: "0 10px", fontSize: "11px" }}
+                                  onClick={toggleEnchorOriginalAudio}
+                                >
+                                  <span>
+                                    {enchorAudioPlaying
+                                      ? "⏸ Jeda Audio Enchor"
+                                      : "🎧 Audio Asli Enchor + Duet"}
+                                  </span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="enchor-lyric-ticker" aria-live="polite">
+                          <span className="mono" style={{ fontSize: "10px", opacity: 0.75 }}>
+                            LIRIK KARAOKE:
+                          </span>{" "}
+                          <strong>
+                            {singingLyric ||
+                              enchorSelected.lyrics[0]?.text ||
+                              "🎤 Siap bernyanyi bersama REYA! ♪"}
+                          </strong>
+                        </div>
+                      </div>
+                    )}
+
+                    {enchorResults.length > 1 && (
+                      <div className="enchor-results-strip">
+                        {enchorResults.slice(0, 6).map((item) => {
+                          const isSelected = enchorSelected?.md5 === item.md5;
+                          return (
+                            <button
+                              key={`${item.chartId}-${item.md5}`}
+                              type="button"
+                              className={`enchor-result-btn ${isSelected ? "active" : ""}`}
+                              onClick={() =>
+                                void searchAndSingEnchor(item.name, item.md5, false)
+                              }
+                              title={`${item.name} - ${item.artist}`}
+                            >
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {isSelected ? "🎤 " : "♪ "}
+                                {item.name} - {item.artist}
+                              </span>
+                              {item.hasLyrics && (
+                                <small className="mono">LIRIK</small>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   {/* Pencarian Lagu AI Otomatis */}
