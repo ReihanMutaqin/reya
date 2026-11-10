@@ -10,9 +10,12 @@ import {
 import { FilesetResolver, GestureRecognizer } from "@mediapipe/tasks-vision";
 
 const API_BASE = "http://127.0.0.1:8765";
+const DEFAULT_VOICEBOX_URL =
+  process.env.NEXT_PUBLIC_VOICEBOX_URL || "http://127.0.0.1:17493";
+const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
+const GEMINI_MODEL =
+  process.env.NEXT_PUBLIC_GEMINI_MODEL || "gemini-flash-latest";
 const OPENROUTER_API_KEY = process.env.NEXT_PUBLIC_OPENROUTER_API_KEY || "";
-const OPENROUTER_MODEL =
-  process.env.NEXT_PUBLIC_OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free";
 const FALLBACK_MODELS = [
   "google/gemma-4-26b-a4b-it:free",
   "google/gemma-4-31b-it:free",
@@ -21,19 +24,28 @@ const FALLBACK_MODELS = [
 ];
 
 type Message = { role: "user" | "assistant"; content: string };
+type VoiceboxProfile = {
+  id: string;
+  name: string;
+  language?: string;
+  description?: string;
+};
 type Health = {
   ollama: boolean;
+  gemini?: boolean;
   openrouter?: boolean;
+  voicebox?: boolean;
+  voicebox_profiles?: VoiceboxProfile[];
   natural_tts: boolean;
   tts: boolean;
   stt: boolean;
   model?: string;
 };
-type VoiceEngine = "supertonic" | "qwen" | "browser";
+type VoiceEngine = "voicebox" | "supertonic" | "qwen" | "browser";
 type MusicModeId = "piano" | "bells" | "drums" | "synth" | "beats";
 type MusicMode = {
   id: MusicModeId;
-  icon: string;
+  bankCode: string;
   name: string;
   caption: string;
   instruction: string;
@@ -54,20 +66,33 @@ type SpeechRecognitionLike = {
   continuous: boolean;
   start: () => void;
   stop: () => void;
-  onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
+  onresult:
+    | ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void)
+    | null;
   onend: (() => void) | null;
   onerror: (() => void) | null;
 };
 
 const gestureLabels: Record<string, string> = {
-  None: "Mencari tangan…",
-  Closed_Fist: "⏹ Stop",
-  Open_Palm: "▶ Aktivasi",
-  Pointing_Up: "♪ Bermain",
-  Thumb_Down: "⏹ Stop",
-  Thumb_Up: "🔥 Boost",
-  Victory: "⏭ Ganti mode",
-  ILoveYou: "💥 Drop",
+  None: "Mencari tangan di kamera",
+  Closed_Fist: "Hentikan musik (Stop)",
+  Open_Palm: "Aktifkan sensor & mainkan akor",
+  Pointing_Up: "Mainkan nada melodi",
+  Thumb_Down: "Hentikan musik (Stop)",
+  Thumb_Up: "Lonjakan volume (Boost)",
+  Victory: "Pindah bank instrumen",
+  ILoveYou: "Efek sub-drop",
+};
+
+const gestureCodes: Record<string, string> = {
+  None: "IDLE",
+  Closed_Fist: "STOP",
+  Open_Palm: "CHRD",
+  Pointing_Up: "NOTE",
+  Thumb_Down: "MUTE",
+  Thumb_Up: "GAIN",
+  Victory: "BANK",
+  ILoveYou: "DROP",
 };
 
 const handConnections = [
@@ -78,7 +103,6 @@ const handConnections = [
   [13, 17], [17, 18], [18, 19], [19, 20], [0, 17],
 ];
 
-/* ─── Pentatonic scale engine ─── */
 const C0 = 16.352;
 const PENTA_SEMI = [0, 2, 4, 7, 9];
 const PENTA_NAME = ["C", "D", "E", "G", "A"];
@@ -94,7 +118,10 @@ function buildScale(startOctave: number, numOctaves: number) {
       });
     }
   }
-  notes.push({ freq: C0 * Math.pow(2, startOctave + numOctaves), name: `C${startOctave + numOctaves}` });
+  notes.push({
+    freq: C0 * Math.pow(2, startOctave + numOctaves),
+    name: `C${startOctave + numOctaves}`,
+  });
   return notes;
 }
 
@@ -107,48 +134,55 @@ function yToNote(y: number, scale: { freq: number; name: string }[]) {
   return scale[Math.max(0, Math.min(scale.length - 1, i))];
 }
 
-/* ─── Music modes ─── */
 const musicModes: MusicMode[] = [
   {
     id: "piano",
-    icon: "🎹",
+    bankCode: "BANK 01",
     name: "Piano Pelangi",
-    caption: "Nada lembut mengalir",
-    instruction: "Angkat tangan tinggi untuk nada tinggi, turunkan untuk rendah. Geser kiri-kanan untuk brightness.",
+    caption: "Harmoni segitiga lembut",
+    instruction:
+      "Angkat tangan tinggi untuk oktaf atas, turunkan untuk oktaf bawah. Geser horizontal untuk mengatur bukaan filter.",
   },
   {
     id: "bells",
-    icon: "✨",
+    bankCode: "BANK 02",
     name: "Lonceng Bintang",
-    caption: "Nada bening & dreamy",
-    instruction: "Angkat tangan pelan-pelan untuk nada bening yang naik. Tangan rendah membunyikan lonceng dalam.",
+    caption: "Resonansi harmonik jernih",
+    instruction:
+      "Gerakkan telunjuk perlahan di area atas untuk denting lonceng panjang. Tangan kiri mengisi resonansi oktaf bawah.",
   },
   {
     id: "drums",
-    icon: "🥁",
+    bankCode: "BANK 03",
     name: "Drum Pop",
-    caption: "Pukul ritme sendiri",
-    instruction: "Tangan tinggi → hi-hat & crash. Tangan rendah → kick & tom. Gerakkan tangan cepat ke bawah untuk pukul.",
+    caption: "8 pad perkusi sintetis",
+    instruction:
+      "Posisi tinggi memicu hi-hat dan crash, posisi rendah memicu kick dan tom. Hentakkan tangan ke bawah untuk pukulan aksen.",
     drumLabels: ["Kick", "Tom", "Pop", "Snare", "Clap", "Hi-hat", "Rim", "Crash"],
   },
   {
     id: "synth",
-    icon: "🪐",
+    bankCode: "BANK 04",
     name: "Synth Orbit",
-    caption: "Nada robot futuristik",
-    instruction: "Tangan tinggi = synth tajam, tangan rendah = sub-bass tebal. Kiri-kanan ubah warna suara.",
+    caption: "Osilator sawtooth ganda",
+    instruction:
+      "Tangan kanan memainkan lead sawtooth detuned, tangan kiri memainkan sub-bass gelombang kotak.",
   },
   {
     id: "beats",
-    icon: "🤖",
+    bankCode: "BANK 05",
     name: "Beat Robot",
-    caption: "Pola ritme instan",
-    instruction: "Ketinggian tangan memilih pola beat berbeda. Gerakkan naik-turun untuk variasi irama.",
+    caption: "Sekuen pola ritme instan",
+    instruction:
+      "Setiap tingkat ketinggian tangan memilih salah satu dari 8 pola sekuenser ritme otomatis.",
     drumLabels: ["Bop", "Hop", "Tik", "Clap", "Disco", "Game", "Cute", "Final"],
   },
 ];
 
-/* ─── Audio synthesis ─── */
+function isDrumLike(mode: MusicModeId) {
+  return mode === "drums" || mode === "beats";
+}
+
 function playNote(
   ctx: AudioContext,
   dest: AudioNode,
@@ -177,7 +211,13 @@ function playNote(
   panner.connect(gain);
   gain.connect(dest);
 
-  const voice = (ratio: number, volume: number, type: OscillatorType, length: number, target = filter as AudioNode) => {
+  const voice = (
+    ratio: number,
+    volume: number,
+    type: OscillatorType,
+    length: number,
+    target = filter as AudioNode,
+  ) => {
     const o = ctx.createOscillator();
     const g = ctx.createGain();
     o.type = type;
@@ -213,7 +253,10 @@ function playNote(
     const o = ctx.createOscillator();
     o.type = "square";
     o.frequency.setValueAtTime(freq, t);
-    o.frequency.exponentialRampToValueAtTime(freq * (isBass ? 0.5 : 2), t + 0.1);
+    o.frequency.exponentialRampToValueAtTime(
+      freq * (isBass ? 0.5 : 2),
+      t + 0.1,
+    );
     o.connect(filter);
     o.start(t);
     o.stop(t + 0.25);
@@ -245,7 +288,10 @@ function scheduleDrumHit(
     const gain = context.createGain();
     oscillator.type = "sine";
     oscillator.frequency.setValueAtTime(kind === 0 ? 155 : 105, when);
-    oscillator.frequency.exponentialRampToValueAtTime(kind === 0 ? 42 : 62, when + 0.2);
+    oscillator.frequency.exponentialRampToValueAtTime(
+      kind === 0 ? 42 : 62,
+      when + 0.2,
+    );
     gain.gain.setValueAtTime(0.7, when);
     gain.gain.exponentialRampToValueAtTime(0.001, when + 0.24);
     oscillator.connect(gain);
@@ -256,7 +302,11 @@ function scheduleDrumHit(
   }
 
   const duration = kind === 2 || kind === 6 ? 0.09 : 0.2;
-  const buffer = context.createBuffer(1, Math.max(1, Math.floor(context.sampleRate * duration)), context.sampleRate);
+  const buffer = context.createBuffer(
+    1,
+    Math.max(1, Math.floor(context.sampleRate * duration)),
+    context.sampleRate,
+  );
   const channel = buffer.getChannelData(0);
   for (let index = 0; index < channel.length; index += 1) {
     const fade = 1 - index / channel.length;
@@ -311,43 +361,31 @@ function playDropEffect(ctx: AudioContext, dest: AudioNode) {
   g.connect(dest);
   osc.start(t);
   osc.stop(t + 0.9);
-  const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.15), ctx.sampleRate);
-  const ch = buf.getChannelData(0);
-  for (let i = 0; i < ch.length; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / ch.length);
-  const noise = ctx.createBufferSource();
-  const ng = ctx.createGain();
-  noise.buffer = buf;
-  ng.gain.setValueAtTime(0.25, t + 0.45);
-  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
-  noise.connect(ng);
-  ng.connect(dest);
-  noise.start(t + 0.45);
-  noise.stop(t + 0.75);
 }
 
 const starterMessages: Message[] = [
   {
     role: "assistant",
     content:
-      "Hai! Aku REYA. Aku siap ngobrol cepat lewat mic, melihat gesture tanganmu, dan bermain musik. Mau ngobrol apa hari ini?",
+      "Halo! Aku REYA. Otakku kini ditenagai Gemini Flash dan suaraku terhubung ke studio Voicebox. Mau ngobrol lewat mikrofon atau main musik pakai gerakan tangan?",
   },
 ];
 
 function fallbackAnswer(text: string) {
   const normalized = text.toLowerCase();
   if (normalized.includes("siapa") || normalized.includes("nama")) {
-    return "Namaku REYA, robot AI sahabatmu! Aku bisa bicara cepat, mendengar suara, dan bermain musik gesture.";
+    return "Namaku REYA, robot AI lokal sahabatmu! Aku memakai Gemini Flash untuk berpikir cepat dan Voicebox untuk berbicara.";
   }
   if (normalized.includes("musik")) {
-    return "Ayo main musik! Buka telapak tanganmu ✋ untuk mulai, lalu angkat tangan tinggi untuk nada tinggi dan turunkan untuk nada rendah!";
+    return "Ayo main musik! Buka telapak tangan di depan kamera atau sentuh langsung area matriks nada di bawah untuk membunyikan instrumen.";
   }
-  if (normalized.includes("kamera") || normalized.includes("tangan")) {
-    return "Nyalakan kamera untuk mencoba gesture tangan: ✋ aktivasi, ☝️ nada, 👍 boost, 🤟 drop, dan ✊ stop.";
+  if (normalized.includes("voicebox") || normalized.includes("suara")) {
+    return "Aku mendukung penuh Voicebox di port 17493. Kamu bisa memilih profil suara atau membuat kloning suara di menu Studio Suara.";
   }
   if (normalized.includes("halo") || normalized.includes("hai")) {
-    return "Halo! Senang banget ketemu kamu! Mau langsung ngobrol santai atau coba main musik bareng?";
+    return "Halo! Senang banget bisa ngobrol sama kamu hari ini. Mau bahas topik seru atau main synth bareng?";
   }
-  return "Aku siap mendengar dan berbicara! Coba tanyakan apa saja atau aktifkan mode ngobrol langsung.";
+  return "Aku siap mendengarkan dan menjawab! Kamu bisa bicara lewat mikrofon atau mengetik pertanyaanmu di bawah.";
 }
 
 async function convertRecordingToWav(blob: Blob) {
@@ -361,7 +399,9 @@ async function convertRecordingToWav(blob: Blob) {
     const buffer = new ArrayBuffer(44 + frames * channels * bytesPerSample);
     const view = new DataView(buffer);
     const writeText = (offset: number, value: string) => {
-      for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+      for (let index = 0; index < value.length; index += 1) {
+        view.setUint8(offset + index, value.charCodeAt(index));
+      }
     };
     writeText(0, "RIFF");
     view.setUint32(4, 36 + frames * channels * bytesPerSample, true);
@@ -377,11 +417,17 @@ async function convertRecordingToWav(blob: Blob) {
     writeText(36, "data");
     view.setUint32(40, frames * channels * bytesPerSample, true);
     let offset = 44;
-    const channelData = Array.from({ length: channels }, (_, channel) => decoded.getChannelData(channel));
+    const channelData = Array.from({ length: channels }, (_, channel) =>
+      decoded.getChannelData(channel),
+    );
     for (let frame = 0; frame < frames; frame += 1) {
       for (let channel = 0; channel < channels; channel += 1) {
         const sample = Math.max(-1, Math.min(1, channelData[channel][frame]));
-        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+        view.setInt16(
+          offset,
+          sample < 0 ? sample * 0x8000 : sample * 0x7fff,
+          true,
+        );
         offset += bytesPerSample;
       }
     }
@@ -407,7 +453,59 @@ async function getBrowserVoices() {
   });
 }
 
-function RobotFace({
+/* Purposeful technical SVG icons (R-04: relevant hardware glyphs, zero decorative emoji) */
+function IconMic() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10v1a7 7 0 0 0 14 0v-1" />
+      <line x1="12" y1="18" x2="12" y2="22" />
+      <line x1="8" y1="22" x2="16" y2="22" />
+    </svg>
+  );
+}
+
+function IconSpeaker() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+    </svg>
+  );
+}
+
+function IconCamera() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </svg>
+  );
+}
+
+function IconWave() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12h3l3-7 4 14 4-10 3 3h3" />
+    </svg>
+  );
+}
+
+function IconTheme({ dark }: { dark: boolean }) {
+  return dark ? (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+    </svg>
+  ) : (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
+function RobotCRTUnit({
   speaking,
   listening,
   thinking,
@@ -418,41 +516,69 @@ function RobotFace({
   thinking: boolean;
   mood: number;
 }) {
+  const statusLabel = listening
+    ? "REC // MENDENGARKAN"
+    : thinking
+    ? "PROC // GEMINI FLASH"
+    : speaking
+    ? "OUT // VOICEBOX AUDIO"
+    : "STBY // REYA SIAP";
+
   return (
-    <div className={`robot-wrap mood-${mood} ${speaking ? "is-speaking" : ""} ${thinking ? "is-thinking" : ""}`}>
-      <div className="signal-orbit orbit-one" />
-      <div className="signal-orbit orbit-two" />
-      <div className="robot-ears">
-        <span />
-        <span />
-      </div>
-      <div className="robot-head">
-        <div className="head-sheen" />
-        <div className="robot-screen">
-          <div className="eye eye-left"><span /></div>
-          <div className="eye eye-right"><span /></div>
-          <div className="robot-mouth">
-            <i /><i /><i /><i /><i />
-          </div>
+    <div
+      className={`crt-housing mood-${mood} ${speaking ? "is-speaking" : ""} ${
+        thinking ? "is-thinking" : ""
+      }`}
+    >
+      <div className="crt-screen">
+        <div className="crt-eyes">
+          <div className="crt-eye" />
+          <div className="crt-eye" />
         </div>
-        <div className="cheek cheek-left" />
-        <div className="cheek cheek-right" />
+        <div className="crt-mouth" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
       </div>
-      <div className={`listen-ring ${listening ? "active" : ""} ${thinking ? "thinking" : ""}`}>
-        {listening ? "🎙 MENDENGARKAN" : thinking ? "⚡ BERPIKIR…" : speaking ? "♫ BERBICARA" : "REYA ONLINE"}
+      <div
+        className={`crt-state-bar ${listening ? "listening" : ""} ${
+          thinking ? "thinking" : ""
+        }`}
+      >
+        {statusLabel}
       </div>
     </div>
   );
 }
 
 export default function Home() {
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const [messages, setMessages] = useState<Message[]>(starterMessages);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [listening, setListening] = useState(false);
   const [voiceChatMode, setVoiceChatMode] = useState(false);
-  const [health, setHealth] = useState<Health>({ ollama: false, openrouter: true, natural_tts: false, tts: false, stt: false });
+  const [activeBrainLabel, setActiveBrainLabel] = useState("gemini-flash-latest");
+  const [health, setHealth] = useState<Health>({
+    ollama: false,
+    gemini: true,
+    openrouter: true,
+    voicebox: false,
+    natural_tts: false,
+    tts: false,
+    stt: false,
+  });
+
+  const [voiceboxUrl, setVoiceboxUrl] = useState(DEFAULT_VOICEBOX_URL);
+  const [voiceboxOnline, setVoiceboxOnline] = useState(false);
+  const [voiceboxProfiles, setVoiceboxProfiles] = useState<VoiceboxProfile[]>([]);
+  const [voiceboxProfileId, setVoiceboxProfileId] = useState("default");
+  const [voiceboxChecking, setVoiceboxChecking] = useState(false);
+
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraLoading, setCameraLoading] = useState(false);
   const [cameraError, setCameraError] = useState("");
@@ -460,13 +586,19 @@ export default function Home() {
   const [cameraAspect, setCameraAspect] = useState<number | null>(null);
   const [gesture, setGesture] = useState("None");
   const [gestureScore, setGestureScore] = useState(0);
+
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [musicMode, setMusicMode] = useState<MusicModeId>("piano");
   const [handPositions, setHandPositions] = useState<HandPositions>({});
-  const [lastPlayedLabel, setLastPlayedLabel] = useState("Siap bermain — buka telapak tangan ✋");
-  const [voiceEngine, setVoiceEngine] = useState<VoiceEngine>("supertonic");
+  const [lastPlayedLabel, setLastPlayedLabel] = useState(
+    "Siap dimainkan: klik matriks nada atau buka telapak tangan di kamera",
+  );
+
+  const [voiceEngine, setVoiceEngine] = useState<VoiceEngine>("voicebox");
   const [voiceProfile, setVoiceProfile] = useState("F2");
-  const [voiceStyle, setVoiceStyle] = useState("Suara perempuan muda yang cute, ceria, playful, hangat, ekspresif, lembut, dan natural seperti karakter robot sahabat");
+  const [voiceStyle, setVoiceStyle] = useState(
+    "Suara perempuan muda yang ceria, hangat, ekspresif, lembut, dan natural seperti sahabat",
+  );
   const [mood, setMood] = useState(0);
   const [voiceModal, setVoiceModal] = useState(false);
   const [voiceName, setVoiceName] = useState("Suara Saya");
@@ -478,6 +610,8 @@ export default function Home() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pitchFieldRef = useRef<HTMLDivElement>(null);
+  const pointerDownRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
   const recognizerRef = useRef<GestureRecognizer | null>(null);
   const animationRef = useRef<number | null>(null);
@@ -489,46 +623,131 @@ export default function Home() {
   const noteReleaseTimerRef = useRef<number | null>(null);
   const musicPlayingRef = useRef(false);
   const musicModeRef = useRef<MusicModeId>("piano");
-  const handMusicRef = useRef({ melody: { freq: 0, at: 0 }, bass: { freq: 0, at: 0 } });
+  const handMusicRef = useRef({
+    melody: { freq: 0, at: 0 },
+    bass: { freq: 0, at: 0 },
+  });
   const previousPalmRef = useRef<{ y: number; at: number } | null>(null);
   const lastStrikeAtRef = useRef(0);
   const micRecorderRef = useRef<MediaRecorder | null>(null);
   const micChunksRef = useRef<Blob[]>([]);
   const voiceRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceChunksRef = useRef<Blob[]>([]);
-  const fallbackNoticeRef = useRef(false);
   const voiceChatModeRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const listenRef = useRef<() => void>(() => undefined);
   const speakRef = useRef<(text: string) => void>(() => undefined);
 
   useEffect(() => {
-    voiceChatModeRef.current = voiceChatMode;
-  }, [voiceChatMode]);
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
-  const statusText = useMemo(() => {
-    if (OPENROUTER_API_KEY) return "⚡ OpenRouter AI Cepat · Siap Bicara";
-    if (health.ollama && health.natural_tts) return "Otak & suara natural aktif";
-    if (health.natural_tts) return "Suara natural Indonesia aktif";
-    if (health.ollama) return "Ollama aktif · suara perangkat";
-    return "Mode demo · siap disambungkan";
-  }, [health]);
-
-  const changeVoiceEngine = useCallback((engine: VoiceEngine) => {
-    setVoiceEngine(engine);
-    fallbackNoticeRef.current = false;
-    if (engine === "supertonic") setVoiceProfile("F2");
-    if (engine === "qwen") setVoiceProfile("Serena");
-  }, []);
-
-  const showToast = useCallback((message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next = prev === "light" ? "dark" : "light";
+      window.localStorage.setItem("reya-theme", next);
+      return next;
+    });
   }, []);
 
   useEffect(() => {
+    if (!voiceModal) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setVoiceModal(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [voiceModal]);
+
+  useEffect(() => {
+    voiceChatModeRef.current = voiceChatMode;
+  }, [voiceChatMode]);
+
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2800);
+  }, []);
+
+  const probeVoicebox = useCallback(
+    async (customUrl?: string, announce = false) => {
+      const target = (customUrl ?? voiceboxUrl).replace(/\/+$/, "");
+      setVoiceboxChecking(true);
+      try {
+        // 1. Try direct browser fetch to Voicebox local server (port 17493)
+        let profiles: VoiceboxProfile[] = [];
+        let isOnline = false;
+
+        try {
+          const directRes = await fetch(`${target}/profiles`, {
+            signal: AbortSignal.timeout(1800),
+          });
+          if (directRes.ok) {
+            isOnline = true;
+            const raw = (await directRes.json()) as unknown;
+            const list = Array.isArray(raw)
+              ? raw
+              : typeof raw === "object" && raw !== null && "profiles" in raw
+              ? ((raw as { profiles?: unknown[] }).profiles ?? [])
+              : [];
+            profiles = list
+              .filter((item): item is Record<string, unknown> =>
+                Boolean(item && typeof item === "object"),
+              )
+              .map((item) => ({
+                id: String(item.id ?? item.profile_id ?? "default"),
+                name: String(item.name ?? item.id ?? "Profil Voicebox"),
+                language: String(item.language ?? "id"),
+              }));
+          }
+        } catch {
+          // 2. Try via server-side proxy route /api/voicebox
+          const proxyRes = await fetch(
+            `/api/voicebox?url=${encodeURIComponent(target)}`,
+            { signal: AbortSignal.timeout(2200) },
+          );
+          if (proxyRes.ok) {
+            const data = (await proxyRes.json()) as {
+              online?: boolean;
+              profiles?: VoiceboxProfile[];
+            };
+            isOnline = Boolean(data.online);
+            profiles = data.profiles ?? [];
+          }
+        }
+
+        setVoiceboxOnline(isOnline);
+        setVoiceboxProfiles(profiles);
+        if (isOnline && profiles.length > 0) {
+          setVoiceboxProfileId((prev) =>
+            prev === "default" ? profiles[0].id : prev,
+          );
+          setVoiceEngine("voicebox");
+        }
+        if (announce) {
+          showToast(
+            isOnline
+              ? `Voicebox terhubung (${profiles.length} profil ditemukan)`
+              : "Voicebox belum aktif di port 17493, mode cadangan siap digunakan",
+          );
+        }
+      } catch {
+        setVoiceboxOnline(false);
+        if (announce) {
+          showToast("Voicebox belum terdeteksi di port 17493");
+        }
+      } finally {
+        setVoiceboxChecking(false);
+      }
+    },
+    [showToast, voiceboxUrl],
+  );
+
+  useEffect(() => {
     let mounted = true;
-    const check = async () => {
+    const checkHealth = async () => {
+      void probeVoicebox();
       try {
         const response = await fetch(`${API_BASE}/health`, {
           signal: AbortSignal.timeout(1800),
@@ -536,15 +755,31 @@ export default function Home() {
         const data = (await response.json()) as Health;
         if (mounted) setHealth(data);
       } catch {
-        if (mounted) setHealth({ ollama: false, openrouter: true, natural_tts: false, tts: false, stt: false });
+        if (mounted) {
+          setHealth({
+            ollama: false,
+            gemini: true,
+            openrouter: true,
+            voicebox: false,
+            natural_tts: false,
+            tts: false,
+            stt: false,
+          });
+        }
       }
     };
-    void check();
-    const timer = window.setInterval(check, 12000);
+    void checkHealth();
+    const timer = window.setInterval(checkHealth, 15000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
     };
+  }, [probeVoicebox]);
+
+  const changeVoiceEngine = useCallback((engine: VoiceEngine) => {
+    setVoiceEngine(engine);
+    if (engine === "supertonic") setVoiceProfile("F2");
+    if (engine === "qwen") setVoiceProfile("Serena");
   }, []);
 
   const ensureMusicAudio = useCallback(() => {
@@ -555,7 +790,7 @@ export default function Home() {
       if (!AudioContextClass) return null;
       context = new AudioContextClass();
       master = context.createGain();
-      master.gain.value = 0.2;
+      master.gain.value = 0.22;
       master.connect(context.destination);
       audioContextRef.current = context;
       masterGainRef.current = master;
@@ -565,221 +800,357 @@ export default function Home() {
   }, []);
 
   const stopMusic = useCallback(() => {
-    if (noteReleaseTimerRef.current) window.clearTimeout(noteReleaseTimerRef.current);
+    if (noteReleaseTimerRef.current)
+      window.clearTimeout(noteReleaseTimerRef.current);
     noteReleaseTimerRef.current = null;
     if (audioContextRef.current) void audioContextRef.current.close();
     audioContextRef.current = null;
     masterGainRef.current = null;
     musicPlayingRef.current = false;
-    handMusicRef.current = { melody: { freq: 0, at: 0 }, bass: { freq: 0, at: 0 } };
+    handMusicRef.current = {
+      melody: { freq: 0, at: 0 },
+      bass: { freq: 0, at: 0 },
+    };
     previousPalmRef.current = null;
     setHandPositions({});
     setMusicPlaying(false);
-    setLastPlayedLabel("Berhenti — buka telapak ✋ untuk mulai lagi");
+    setLastPlayedLabel(
+      "Sensor musik berhenti: buka telapak tangan atau sentuh matriks untuk mulai",
+    );
   }, []);
 
   const startMusic = useCallback(() => {
     if (!ensureMusicAudio()) return;
     musicPlayingRef.current = true;
     setMusicPlaying(true);
-    setLastPlayedLabel("Sensor aktif — angkat ☝️ dan gerakkan tanganmu naik-turun");
+    setLastPlayedLabel(
+      "Sensor aktif: angkat telunjuk di kamera atau geser matriks nada di bawah",
+    );
   }, [ensureMusicAudio]);
 
   const selectMusicMode = useCallback((nextMode: MusicModeId) => {
     musicModeRef.current = nextMode;
     setMusicMode(nextMode);
-    handMusicRef.current = { melody: { freq: 0, at: 0 }, bass: { freq: 0, at: 0 } };
+    handMusicRef.current = {
+      melody: { freq: 0, at: 0 },
+      bass: { freq: 0, at: 0 },
+    };
     previousPalmRef.current = null;
     setHandPositions({});
-    const next = musicModes.find((mode) => mode.id === nextMode) ?? musicModes[0];
-    setLastPlayedLabel(`${next.icon} ${next.name} siap dimainkan`);
+    const next =
+      musicModes.find((mode) => mode.id === nextMode) ?? musicModes[0];
+    setLastPlayedLabel(`${next.bankCode} // ${next.name} siap dimainkan`);
   }, []);
 
-  /* ─── Multi-hand music handler ─── */
-  const handleHandMusic = useCallback((hands: HandInfo[], now: number) => {
-    if (!musicPlayingRef.current) return;
-    const audio = ensureMusicAudio();
-    if (!audio) return;
-
-    const mode = musicModeRef.current;
-    const newPositions: HandPositions = {};
-
-    for (const hand of hands) {
-      if (hand.score < 0.5) continue;
-      const tip = hand.landmarks[8];
-      const palm = hand.landmarks[9] ?? hand.landmarks[0];
-      if (!tip) continue;
-
-      const isRight = hand.handedness === "Right";
-      const isBass = !isRight;
-      const key = isRight ? "right" as const : "left" as const;
-      const scale = isBass ? bassScale : melodyScale;
-      const stateKey = isBass ? "bass" as const : "melody" as const;
-
-      const isPlaying = hand.name === "Pointing_Up" || hand.name === "Open_Palm";
-      const screenX = 1 - tip.x;
-      const brightness = Math.max(0, Math.min(1, screenX));
-      const pan = screenX * 2 - 1;
-
-      if (isPlaying) {
-        const note = yToNote(tip.y, scale);
-        const prev = handMusicRef.current[stateKey];
-        const freqChanged = Math.abs(note.freq - prev.freq) > 1;
-        const elapsed = now - prev.at;
-        const isDrum = mode === "drums" || mode === "beats";
-        const cooldown = isDrum ? 160 : 75;
-
-        if (freqChanged && elapsed > cooldown) {
-          handMusicRef.current[stateKey] = { freq: note.freq, at: now };
-
-          if (mode === "drums") {
-            const padIndex = Math.floor((1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99);
-            scheduleDrumHit(audio.context, audio.master, padIndex);
-          } else if (mode === "beats") {
-            const padIndex = Math.floor((1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99);
-            scheduleBeatPattern(audio.context, audio.master, padIndex);
-          } else if (hand.name === "Open_Palm") {
-            playChord(audio.context, audio.master, note.freq, mode, brightness, pan);
-          } else {
-            playNote(audio.context, audio.master, note.freq, mode, brightness, pan, isBass);
-          }
-        }
-
-        const modeInfo = musicModes.find((m) => m.id === mode) ?? musicModes[0];
-        const label = isDrum && modeInfo.drumLabels
-          ? modeInfo.drumLabels[Math.floor((1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99)]
-          : note.name;
-        newPositions[key] = { x: tip.x, y: tip.y, note: label ?? note.name, playing: true };
-      } else {
-        newPositions[key] = { x: tip.x, y: tip.y, note: "", playing: false };
-      }
-
-      /* drum strike on fast downward motion */
-      if (isDrumLike(mode) && palm) {
-        const prev = previousPalmRef.current;
-        const dt = prev ? Math.max(0.016, (now - prev.at) / 1000) : 0;
-        const velocity = prev ? (palm.y - prev.y) / dt : 0;
-        if (velocity > 0.5 && now - lastStrikeAtRef.current > 170) {
-          lastStrikeAtRef.current = now;
-          const padIndex = Math.floor((1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99);
-          scheduleDrumHit(audio.context, audio.master, padIndex);
-        }
-        previousPalmRef.current = { y: palm.y, at: now };
-      }
-    }
-
-    setHandPositions(newPositions);
-  }, [ensureMusicAudio]);
-
-  /* ─── Gesture actions (modern reactive style) ─── */
-  const runGestureAction = useCallback((name: string) => {
-    const now = performance.now();
-    if (name === lastGestureRef.current && now - lastGestureAtRef.current < 2200) return;
-    lastGestureRef.current = name;
-    lastGestureAtRef.current = now;
-
-    if (name === "Open_Palm") {
-      if (!musicPlayingRef.current) {
-        startMusic();
-        showToast("🎵 Musik aktif! Angkat tanganmu ☝️");
-      }
-    } else if (name === "Closed_Fist" || name === "Thumb_Down") {
-      if (musicPlayingRef.current) {
-        stopMusic();
-        showToast("⏹ Musik dihentikan");
-      }
-    } else if (name === "Victory") {
-      if (musicPlayingRef.current) {
-        const currentIndex = musicModes.findIndex((mode) => mode.id === musicModeRef.current);
-        const nextMode = musicModes[(currentIndex + 1) % musicModes.length];
-        selectMusicMode(nextMode.id);
-        showToast(`⏭ ${nextMode.name}`);
-      } else {
-        setMood((current) => (current + 1) % 3);
-        showToast("Mood REYA berubah ✨");
-      }
-    } else if (name === "Thumb_Up") {
-      if (musicPlayingRef.current && masterGainRef.current && audioContextRef.current) {
-        const g = masterGainRef.current;
-        const t = audioContextRef.current.currentTime;
-        g.gain.cancelScheduledValues(t);
-        g.gain.setValueAtTime(0.5, t);
-        g.gain.linearRampToValueAtTime(0.2, t + 2);
-        showToast("🔥 Boost!");
-        setMood((m) => (m + 1) % 3);
-      } else {
-        startMusic();
-        showToast("🎵 Musik aktif!");
-      }
-    } else if (name === "ILoveYou") {
+  const triggerMatrixCoordinate = useCallback(
+    (normX: number, normY: number) => {
       const audio = ensureMusicAudio();
-      if (audio) {
+      if (!audio) return;
+      if (!musicPlayingRef.current) {
         musicPlayingRef.current = true;
         setMusicPlaying(true);
-        playDropEffect(audio.context, audio.master);
-        showToast("💥 Drop!");
-      }
-    } else if (name === "Pointing_Up") {
-      if (!musicPlayingRef.current) listenRef.current();
-    }
-  }, [ensureMusicAudio, selectMusicMode, showToast, startMusic, stopMusic]);
-
-  /* ─── Draw multi-hand skeleton ─── */
-  const drawHands = useCallback((allLandmarks: Landmark[][], handedness: string[]) => {
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
-    const width = video.videoWidth || 640;
-    const height = video.videoHeight || 480;
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-    }
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, width, height);
-
-    allLandmarks.forEach((landmarks, idx) => {
-      const isRight = handedness[idx] === "Right";
-      const stroke = isRight ? "rgba(141, 255, 210, .92)" : "rgba(200, 160, 255, .92)";
-      const fill = isRight ? "#f4ff8a" : "#d4b0ff";
-
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = Math.max(3, width / 200);
-      ctx.lineCap = "round";
-      for (const [start, end] of handConnections) {
-        const a = landmarks[start];
-        const b = landmarks[end];
-        if (!a || !b) continue;
-        ctx.beginPath();
-        ctx.moveTo((1 - a.x) * width, a.y * height);
-        ctx.lineTo((1 - b.x) * width, b.y * height);
-        ctx.stroke();
       }
 
-      ctx.fillStyle = fill;
-      landmarks.forEach((point, i) => {
-        ctx.beginPath();
-        ctx.arc((1 - point.x) * width, point.y * height, i % 4 === 0 ? 6 : 4, 0, Math.PI * 2);
-        ctx.fill();
+      const clampedX = Math.max(0, Math.min(0.999, normX));
+      const clampedY = Math.max(0, Math.min(0.999, normY));
+      const mode = musicModeRef.current;
+      const now = performance.now();
+      const note = yToNote(clampedY, melodyScale);
+      const prev = handMusicRef.current.melody;
+      const isDrum = isDrumLike(mode);
+      const cooldown = isDrum ? 140 : 65;
+
+      if (Math.abs(note.freq - prev.freq) > 1 || now - prev.at > cooldown) {
+        handMusicRef.current.melody = { freq: note.freq, at: now };
+        const brightness = clampedX;
+        const pan = clampedX * 2 - 1;
+
+        if (mode === "drums") {
+          const padIndex = Math.floor((1 - clampedY) * 7.99);
+          scheduleDrumHit(audio.context, audio.master, padIndex);
+        } else if (mode === "beats") {
+          const padIndex = Math.floor((1 - clampedY) * 7.99);
+          scheduleBeatPattern(audio.context, audio.master, padIndex);
+        } else {
+          playNote(
+            audio.context,
+            audio.master,
+            note.freq,
+            mode,
+            brightness,
+            pan,
+            false,
+          );
+        }
+      }
+
+      const modeInfo =
+        musicModes.find((m) => m.id === mode) ?? musicModes[0];
+      const label =
+        isDrum && modeInfo.drumLabels
+          ? modeInfo.drumLabels[Math.floor((1 - clampedY) * 7.99)]
+          : note.name;
+      const cutoffHz = Math.round(500 + clampedX * 4500);
+
+      setHandPositions((curr) => ({
+        ...curr,
+        right: {
+          x: 1 - clampedX,
+          y: clampedY,
+          note: label ?? note.name,
+          playing: true,
+        },
+      }));
+      setLastPlayedLabel(
+        `Nada aktif: ${label ?? note.name} (${Math.round(note.freq)} Hz · Filter ${cutoffHz} Hz)`,
+      );
+    },
+    [ensureMusicAudio],
+  );
+
+  const handleHandMusic = useCallback(
+    (hands: HandInfo[], now: number) => {
+      if (!musicPlayingRef.current) return;
+      const audio = ensureMusicAudio();
+      if (!audio) return;
+
+      const mode = musicModeRef.current;
+      const newPositions: HandPositions = {};
+
+      for (const hand of hands) {
+        if (hand.score < 0.5) continue;
+        const tip = hand.landmarks[8];
+        const palm = hand.landmarks[9] ?? hand.landmarks[0];
+        if (!tip) continue;
+
+        const isRight = hand.handedness === "Right";
+        const isBass = !isRight;
+        const key = isRight ? ("right" as const) : ("left" as const);
+        const scale = isBass ? bassScale : melodyScale;
+        const stateKey = isBass ? ("bass" as const) : ("melody" as const);
+
+        const isPlaying =
+          hand.name === "Pointing_Up" || hand.name === "Open_Palm";
+        const screenX = 1 - tip.x;
+        const brightness = Math.max(0, Math.min(1, screenX));
+        const pan = screenX * 2 - 1;
+
+        if (isPlaying) {
+          const note = yToNote(tip.y, scale);
+          const prev = handMusicRef.current[stateKey];
+          const freqChanged = Math.abs(note.freq - prev.freq) > 1;
+          const elapsed = now - prev.at;
+          const isDrum = isDrumLike(mode);
+          const cooldown = isDrum ? 160 : 75;
+
+          if (freqChanged && elapsed > cooldown) {
+            handMusicRef.current[stateKey] = { freq: note.freq, at: now };
+
+            if (mode === "drums") {
+              const padIndex = Math.floor(
+                (1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99,
+              );
+              scheduleDrumHit(audio.context, audio.master, padIndex);
+            } else if (mode === "beats") {
+              const padIndex = Math.floor(
+                (1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99,
+              );
+              scheduleBeatPattern(audio.context, audio.master, padIndex);
+            } else if (hand.name === "Open_Palm") {
+              playChord(
+                audio.context,
+                audio.master,
+                note.freq,
+                mode,
+                brightness,
+                pan,
+              );
+            } else {
+              playNote(
+                audio.context,
+                audio.master,
+                note.freq,
+                mode,
+                brightness,
+                pan,
+                isBass,
+              );
+            }
+          }
+
+          const modeInfo =
+            musicModes.find((m) => m.id === mode) ?? musicModes[0];
+          const label =
+            isDrum && modeInfo.drumLabels
+              ? modeInfo.drumLabels[
+                  Math.floor((1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99)
+                ]
+              : note.name;
+          newPositions[key] = {
+            x: tip.x,
+            y: tip.y,
+            note: label ?? note.name,
+            playing: true,
+          };
+          setLastPlayedLabel(
+            `Sensor tangan: ${label ?? note.name} (${Math.round(note.freq)} Hz)`,
+          );
+        } else {
+          newPositions[key] = {
+            x: tip.x,
+            y: tip.y,
+            note: "",
+            playing: false,
+          };
+        }
+
+        if (isDrumLike(mode) && palm) {
+          const prev = previousPalmRef.current;
+          const dt = prev ? Math.max(0.016, (now - prev.at) / 1000) : 0;
+          const velocity = prev ? (palm.y - prev.y) / dt : 0;
+          if (velocity > 0.5 && now - lastStrikeAtRef.current > 170) {
+            lastStrikeAtRef.current = now;
+            const padIndex = Math.floor(
+              (1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99,
+            );
+            scheduleDrumHit(audio.context, audio.master, padIndex);
+          }
+          previousPalmRef.current = { y: palm.y, at: now };
+        }
+      }
+
+      setHandPositions(newPositions);
+    },
+    [ensureMusicAudio],
+  );
+
+  const runGestureAction = useCallback(
+    (name: string) => {
+      const now = performance.now();
+      if (
+        name === lastGestureRef.current &&
+        now - lastGestureAtRef.current < 2200
+      )
+        return;
+      lastGestureRef.current = name;
+      lastGestureAtRef.current = now;
+
+      if (name === "Open_Palm") {
+        if (!musicPlayingRef.current) {
+          startMusic();
+          showToast("Sensor musik aktif. Angkat telunjuk untuk mengatur nada.");
+        }
+      } else if (name === "Closed_Fist" || name === "Thumb_Down") {
+        if (musicPlayingRef.current) {
+          stopMusic();
+          showToast("Musik dihentikan.");
+        }
+      } else if (name === "Victory") {
+        if (musicPlayingRef.current) {
+          const currentIndex = musicModes.findIndex(
+            (mode) => mode.id === musicModeRef.current,
+          );
+          const nextMode = musicModes[(currentIndex + 1) % musicModes.length];
+          selectMusicMode(nextMode.id);
+          showToast(`Bank instrumen: ${nextMode.name}`);
+        } else {
+          setMood((current) => (current + 1) % 3);
+          showToast("Mode tampilan CRT REYA diganti.");
+        }
+      } else if (name === "Thumb_Up") {
+        if (
+          musicPlayingRef.current &&
+          masterGainRef.current &&
+          audioContextRef.current
+        ) {
+          const g = masterGainRef.current;
+          const t = audioContextRef.current.currentTime;
+          g.gain.cancelScheduledValues(t);
+          g.gain.setValueAtTime(0.5, t);
+          g.gain.linearRampToValueAtTime(0.22, t + 2);
+          showToast("Lonjakan volume aktif (Boost).");
+          setMood((m) => (m + 1) % 3);
+        } else {
+          startMusic();
+          showToast("Sensor musik diaktifkan.");
+        }
+      } else if (name === "ILoveYou") {
+        const audio = ensureMusicAudio();
+        if (audio) {
+          musicPlayingRef.current = true;
+          setMusicPlaying(true);
+          playDropEffect(audio.context, audio.master);
+          showToast("Efek sub-drop dimainkan.");
+        }
+      } else if (name === "Pointing_Up") {
+        if (!musicPlayingRef.current) listenRef.current();
+      }
+    },
+    [ensureMusicAudio, selectMusicMode, showToast, startMusic, stopMusic],
+  );
+
+  const drawHands = useCallback(
+    (allLandmarks: Landmark[][], handedness: string[]) => {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      if (!canvas || !video) return;
+      const width = video.videoWidth || 640;
+      const height = video.videoHeight || 480;
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, width, height);
+
+      allLandmarks.forEach((landmarks, idx) => {
+        const isRight = handedness[idx] === "Right";
+        const stroke = isRight ? "#5CE8A0" : "#D2B3FF";
+        const fill = isRight ? "#E8F47A" : "#D2B3FF";
+
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = Math.max(3, width / 200);
+        ctx.lineCap = "round";
+        for (const [start, end] of handConnections) {
+          const a = landmarks[start];
+          const b = landmarks[end];
+          if (!a || !b) continue;
+          ctx.beginPath();
+          ctx.moveTo((1 - a.x) * width, a.y * height);
+          ctx.lineTo((1 - b.x) * width, b.y * height);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = fill;
+        landmarks.forEach((point, i) => {
+          ctx.beginPath();
+          ctx.arc(
+            (1 - point.x) * width,
+            point.y * height,
+            i % 4 === 0 ? 6 : 4,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+        });
+
+        const tip = landmarks[8];
+        if (tip) {
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc((1 - tip.x) * width, tip.y * height, 16, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       });
-
-      /* Glow ring around index finger tip */
-      const tip = landmarks[8];
-      if (tip) {
-        ctx.strokeStyle = isRight ? "rgba(141, 255, 210, .55)" : "rgba(200, 160, 255, .55)";
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc((1 - tip.x) * width, tip.y * height, 18, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    });
-  }, []);
+    },
+    [],
+  );
 
   const handleSpeechEnd = useCallback(() => {
     isSpeakingRef.current = false;
     setSpeaking(false);
-    // If voice conversation mode is on, auto-listen for next user utterance
     if (voiceChatModeRef.current) {
       window.setTimeout(() => {
         if (voiceChatModeRef.current && !isSpeakingRef.current) {
@@ -789,256 +1160,465 @@ export default function Home() {
     }
   }, []);
 
-  const playCuteAudio = useCallback(async (text: string): Promise<boolean> => {
-    try {
-      const clean = text.replace(/[*_#`~]/g, "").trim();
-      if (!clean) return false;
-      const res = await fetch(`/api/tts?text=${encodeURIComponent(clean.slice(0, 300))}`);
-      if (!res.ok) return false;
-      const blob = await res.blob();
-      if (!blob || blob.size < 100) return false;
-
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtx) return false;
-      const ctx = new AudioCtx();
-      if (ctx.state === "suspended") await ctx.resume();
-
-      const arrayBuf = await blob.arrayBuffer();
-      const audioBuffer = await ctx.decodeAudioData(arrayBuf);
-
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.playbackRate.value = 1.13; // cute, youthful, anime-robot pitch & energetic cadence!
-
-      const filter = ctx.createBiquadFilter();
-      filter.type = "highshelf";
-      filter.frequency.value = 3200;
-      filter.gain.value = 2.5;
-
-      source.connect(filter);
-      filter.connect(ctx.destination);
-
-      isSpeakingRef.current = true;
-      setSpeaking(true);
-
-      source.onended = () => {
-        handleSpeechEnd();
-        void ctx.close();
-      };
-
-      source.start(0);
-      return true;
-    } catch {
-      return false;
-    }
-  }, [handleSpeechEnd]);
-
-  const browserSpeak = useCallback(async (text: string) => {
-    if (!("speechSynthesis" in window)) {
-      handleSpeechEnd();
-      return;
-    }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text.replace(/[*_#`~]/g, ""));
-    utterance.lang = "id-ID";
-    utterance.rate = 1.08; // cheerful, lively cadence
-    utterance.pitch = 1.32; // cute, cheerful, high-pitch anime robot voice
-    const voices = await getBrowserVoices();
-    const isIndonesian = (voice: SpeechSynthesisVoice) =>
-      voice.lang.toLowerCase().startsWith("id") || voice.lang.toLowerCase().startsWith("in");
-    const isGoogleIndo = (voice: SpeechSynthesisVoice) =>
-      isIndonesian(voice) && /google/i.test(voice.name);
-    const soundsFeminine = (voice: SpeechSynthesisVoice) =>
-      /gadis|dewi|siti|female|woman|serena|zira|sara|samantha|aria|ava|jenny|natasha|sonia|tessa/i.test(voice.name);
-    const isMalay = (voice: SpeechSynthesisVoice) => voice.lang.toLowerCase().startsWith("ms");
-
-    utterance.voice =
-      voices.find(isGoogleIndo) ??
-      voices.find((voice) => isIndonesian(voice) && soundsFeminine(voice)) ??
-      voices.find(isIndonesian) ??
-      voices.find((voice) => isMalay(voice) && soundsFeminine(voice)) ??
-      voices.find(soundsFeminine) ??
-      null;
-
-    utterance.onstart = () => {
-      isSpeakingRef.current = true;
-      setSpeaking(true);
-    };
-    utterance.onend = handleSpeechEnd;
-    utterance.onerror = handleSpeechEnd;
-    window.speechSynthesis.speak(utterance);
-  }, [handleSpeechEnd]);
-
-  const speak = useCallback(async (text: string) => {
-    // 1. High-Quality Natural Cute Indonesian Voice (Online & Vercel)
-    const cuteOk = await playCuteAudio(text);
-    if (cuteOk) return;
-
-    // 2. Local Python Server (Supertonic F2) if running locally
-    if (voiceEngine !== "browser") {
+  const playAudioBlob = useCallback(
+    async (blob: Blob, applyCuteShaping: boolean): Promise<boolean> => {
       try {
+        if (!blob || blob.size < 100) return false;
+        const AudioCtx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext })
+            .webkitAudioContext;
+        if (!AudioCtx) return false;
+        const ctx = new AudioCtx();
+        if (ctx.state === "suspended") await ctx.resume();
+
+        const arrayBuf = await blob.arrayBuffer();
+        const audioBuffer = await ctx.decodeAudioData(arrayBuf);
+
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.playbackRate.value = applyCuteShaping ? 1.12 : 1.0;
+
+        if (applyCuteShaping) {
+          const filter = ctx.createBiquadFilter();
+          filter.type = "highshelf";
+          filter.frequency.value = 3200;
+          filter.gain.value = 2.4;
+          source.connect(filter);
+          filter.connect(ctx.destination);
+        } else {
+          source.connect(ctx.destination);
+        }
+
         isSpeakingRef.current = true;
         setSpeaking(true);
-        const response = await fetch(`${API_BASE}/api/tts`, {
+
+        source.onended = () => {
+          handleSpeechEnd();
+          void ctx.close();
+        };
+
+        source.start(0);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [handleSpeechEnd],
+  );
+
+  const playVoiceboxDirect = useCallback(
+    async (text: string): Promise<boolean> => {
+      const clean = text.replace(/[*_#`~]/g, "").trim();
+      if (!clean) return false;
+      const baseUrl = voiceboxUrl.replace(/\/+$/, "");
+
+      // 1. Try OpenAI-compatible Voicebox endpoint (/v1/audio/speech)
+      try {
+        const res = await fetch(`${baseUrl}/v1/audio/speech`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            text,
-            engine: voiceEngine,
-            speaker: voiceProfile,
-            instruction: voiceStyle,
-            language: "Auto",
+            model: "qwen",
+            input: clean,
+            voice: voiceboxProfileId || "default",
+            response_format: "wav",
           }),
+          signal: AbortSignal.timeout(9000),
         });
-        if (response.ok) {
-          const blob = await response.blob();
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          audio.onended = () => {
-            URL.revokeObjectURL(url);
-            handleSpeechEnd();
-          };
-          audio.onerror = () => {
-            URL.revokeObjectURL(url);
-            browserSpeak(text);
-          };
-          await audio.play();
-          return;
+        if (res.ok) {
+          const blob = await res.blob();
+          if (await playAudioBlob(blob, false)) {
+            setVoiceboxOnline(true);
+            return true;
+          }
         }
       } catch {
-        // Fall through
+        // Continue to native /generate route
       }
-    }
 
-    // 3. Tuned High-Pitch Browser Speech
-    void browserSpeak(text);
-  }, [browserSpeak, handleSpeechEnd, playCuteAudio, voiceEngine, voiceProfile, voiceStyle]);
+      // 2. Try native /generate endpoint from jamiepine/voicebox
+      try {
+        const genRes = await fetch(`${baseUrl}/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: clean,
+            profile_id: voiceboxProfileId || "default",
+            language: "id",
+            instruct: voiceStyle,
+          }),
+          signal: AbortSignal.timeout(12000),
+        });
+        if (genRes.ok) {
+          const ct = genRes.headers.get("content-type") || "";
+          if (ct.includes("audio/")) {
+            const blob = await genRes.blob();
+            if (await playAudioBlob(blob, false)) {
+              setVoiceboxOnline(true);
+              return true;
+            }
+          }
+          const data = (await genRes.json()) as {
+            id?: string;
+            generation_id?: string;
+            audio?: string;
+            audio_base64?: string;
+          };
+          const b64 = data.audio || data.audio_base64;
+          if (typeof b64 === "string" && b64.length > 100) {
+            const binStr = window.atob(b64);
+            const bytes = new Uint8Array(binStr.length);
+            for (let i = 0; i < binStr.length; i++) {
+              bytes[i] = binStr.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: "audio/wav" });
+            if (await playAudioBlob(blob, false)) {
+              setVoiceboxOnline(true);
+              return true;
+            }
+          }
+          const genId = data.id || data.generation_id;
+          if (genId) {
+            for (const suffix of [
+              `/audio/${genId}`,
+              `/history/${genId}/export-audio`,
+            ]) {
+              const audioRes = await fetch(`${baseUrl}${suffix}`, {
+                signal: AbortSignal.timeout(6000),
+              });
+              if (audioRes.ok) {
+                const blob = await audioRes.blob();
+                if (await playAudioBlob(blob, false)) {
+                  setVoiceboxOnline(true);
+                  return true;
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Voicebox not running locally
+      }
+
+      return false;
+    },
+    [playAudioBlob, voiceStyle, voiceboxProfileId, voiceboxUrl],
+  );
+
+  const playServerTTS = useCallback(
+    async (text: string): Promise<boolean> => {
+      try {
+        const clean = text.replace(/[*_#`~]/g, "").trim();
+        if (!clean) return false;
+        const params = new URLSearchParams({
+          text: clean.slice(0, 300),
+          engine: voiceEngine === "voicebox" ? "voicebox" : "supertonic",
+          profile_id: voiceboxProfileId || "default",
+          voicebox_url: voiceboxUrl,
+        });
+        const res = await fetch(`/api/tts?${params.toString()}`);
+        if (!res.ok) return false;
+        const provider = res.headers.get("X-Voice-Provider");
+        const blob = await res.blob();
+        return await playAudioBlob(blob, provider !== "voicebox");
+      } catch {
+        return false;
+      }
+    },
+    [playAudioBlob, voiceEngine, voiceboxProfileId, voiceboxUrl],
+  );
+
+  const browserSpeak = useCallback(
+    async (text: string) => {
+      if (!("speechSynthesis" in window)) {
+        handleSpeechEnd();
+        return;
+      }
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(
+        text.replace(/[*_#`~]/g, ""),
+      );
+      utterance.lang = "id-ID";
+      utterance.rate = 1.08;
+      utterance.pitch = 1.28;
+      const voices = await getBrowserVoices();
+      const isIndonesian = (voice: SpeechSynthesisVoice) =>
+        voice.lang.toLowerCase().startsWith("id") ||
+        voice.lang.toLowerCase().startsWith("in");
+      const isGoogleIndo = (voice: SpeechSynthesisVoice) =>
+        isIndonesian(voice) && /google/i.test(voice.name);
+      const soundsFeminine = (voice: SpeechSynthesisVoice) =>
+        /gadis|dewi|siti|female|woman|serena|zira|sara|samantha|aria|ava|jenny|natasha|sonia|tessa/i.test(
+          voice.name,
+        );
+
+      utterance.voice =
+        voices.find(isGoogleIndo) ??
+        voices.find((voice) => isIndonesian(voice) && soundsFeminine(voice)) ??
+        voices.find(isIndonesian) ??
+        voices.find(soundsFeminine) ??
+        null;
+
+      utterance.onstart = () => {
+        isSpeakingRef.current = true;
+        setSpeaking(true);
+      };
+      utterance.onend = handleSpeechEnd;
+      utterance.onerror = handleSpeechEnd;
+      window.speechSynthesis.speak(utterance);
+    },
+    [handleSpeechEnd],
+  );
+
+  const speak = useCallback(
+    async (text: string) => {
+      // 1. Direct jamiepine/voicebox synthesis if selected or online
+      if (voiceEngine === "voicebox" || voiceboxOnline) {
+        const vbOk = await playVoiceboxDirect(text);
+        if (vbOk) return;
+      }
+
+      // 2. Local Python AI Server (Supertonic F2 / Qwen / Voicebox proxy)
+      if (voiceEngine !== "browser") {
+        try {
+          const response = await fetch(`${API_BASE}/api/tts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text,
+              engine: voiceEngine,
+              speaker:
+                voiceEngine === "voicebox" ? voiceboxProfileId : voiceProfile,
+              instruction: voiceStyle,
+              language: "Auto",
+              voicebox_url: voiceboxUrl,
+            }),
+            signal: AbortSignal.timeout(7000),
+          });
+          if (response.ok) {
+            const blob = await response.blob();
+            if (await playAudioBlob(blob, false)) return;
+          }
+        } catch {
+          // Fall through to Next.js /api/tts route
+        }
+      }
+
+      // 3. Server-side /api/tts (Voicebox proxy + natural Indonesian audio fallback)
+      if (voiceEngine !== "browser") {
+        const serverOk = await playServerTTS(text);
+        if (serverOk) return;
+      }
+
+      // 4. Browser SpeechSynthesis fallback
+      void browserSpeak(text);
+    },
+    [
+      browserSpeak,
+      playAudioBlob,
+      playServerTTS,
+      playVoiceboxDirect,
+      voiceEngine,
+      voiceProfile,
+      voiceStyle,
+      voiceboxOnline,
+      voiceboxProfileId,
+      voiceboxUrl,
+    ],
+  );
 
   useEffect(() => {
     speakRef.current = (text: string) => void speak(text);
   }, [speak]);
 
-  /* ─── Fast OpenRouter AI Chat (real-time conversation) ─── */
-  const askRobot = useCallback(async (rawText?: string) => {
-    const text = (rawText ?? input).trim();
-    if (!text || thinking) return;
-    const userMessage: Message = { role: "user", content: text };
-    const nextMessages = [...messages, userMessage];
-    setMessages(nextMessages);
-    setInput("");
-    setThinking(true);
-    let answer = "";
+  /* Argon Gemini Flash API chat with server & OpenRouter fallbacks */
+  const askRobot = useCallback(
+    async (rawText?: string) => {
+      const text = (rawText ?? input).trim();
+      if (!text || thinking) return;
+      const userMessage: Message = { role: "user", content: text };
+      const nextMessages = [...messages, userMessage];
+      setMessages(nextMessages);
+      setInput("");
+      setThinking(true);
+      let answer = "";
 
-    const systemPrompt =
-      "Kamu adalah REYA, robot AI perempuan yang sangat imut, ceria, manis, ramah, dan pintar seperti karakter anime chibi sahabat terbaik! " +
-      "Aturan bicara REYA: " +
-      "1. Selalu gunakan Bahasa Indonesia percakapan yang santai, luwes, imut, dan akrab (gunakan kata-kata seperti: 'aku', 'kamu', 'nih', 'dong', 'yuk', 'hehe', 'wah', 'senang banget', 'yay!'). " +
-      "2. JANGAN PERNAH gunakan bahasa formal kaku seperti: 'Anda', 'Saya siap membantu', 'Sebagai AI', 'Tentu saja'. " +
-      "3. Jawablah singkat, manis, dan ekspresif (1-2 kalimat pendek) layaknya sedang ngobrol santai langsung lewat suara. " +
-      "4. Jawablah langsung ke inti pembicaraan dengan nada hangat dan ceria!";
+      const systemPrompt =
+        "Kamu adalah REYA, robot AI perempuan yang ceria, hangat, ramah, dan pintar. " +
+        "Aturan bicara REYA: " +
+        "1. Selalu gunakan Bahasa Indonesia percakapan yang santai, luwes, dan akrab (gunakan kata 'aku' dan 'kamu'). " +
+        "2. Jangan gunakan bahasa kaku seperti 'Anda', 'Saya siap membantu', atau 'Sebagai AI'. " +
+        "3. Jawab singkat, jelas, dan ekspresif (1 sampai 2 kalimat pendek) layaknya ngobrol langsung lewat suara.";
 
-    const cleanCuteResponse = (raw: string) => {
-      return raw
-        .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
-        .replace(/^(?:Here's a thinking process|Thinking Process:)[\s\S]*?\n\n/i, "")
-        .replace(/\*.*?\*/g, "")
-        .replace(/[#_`]/g, "")
-        .trim();
-    };
+      const cleanResponse = (raw: string) =>
+        raw
+          .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+          .replace(
+            /^(?:Here's a thinking process|Thinking Process:)[\s\S]*?\n\n/i,
+            "",
+          )
+          .replace(/\*.*?\*/g, "")
+          .replace(/[#_`]/g, "")
+          .replace(/\u2014/g, ", ")
+          .trim();
 
-    // 1. Direct OpenRouter call with fallback models (Fastest for conversation)
-    if (OPENROUTER_API_KEY) {
-      for (const modelToTry of FALLBACK_MODELS) {
-        if (answer) break;
+      const historyText = nextMessages
+        .slice(-8)
+        .map(
+          (m) => `${m.role === "assistant" ? "REYA" : "Pengguna"}: ${m.content}`,
+        )
+        .join("\n");
+      const fullPrompt = `${systemPrompt}\n\nPercakapan:\n${historyText}\nREYA:`;
+
+      // 1. Direct Argon Gemini API call (gemini-flash-latest with X-goog-api-key)
+      if (GEMINI_API_KEY) {
         try {
-          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": "http://localhost:3088",
-              "X-Title": "REYA Robot AI",
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-goog-api-key": GEMINI_API_KEY,
+              },
+              body: JSON.stringify({
+                contents: [
+                  {
+                    parts: [
+                      {
+                        text: fullPrompt,
+                      },
+                    ],
+                  },
+                ],
+              }),
+              signal: AbortSignal.timeout(12000),
             },
-            body: JSON.stringify({
-              model: modelToTry,
-              messages: [
-                { role: "system", content: systemPrompt },
-                ...nextMessages.slice(-8).map((m) => ({ role: m.role, content: m.content })),
-              ],
-              max_tokens: 120,
-              temperature: 0.85,
-            }),
-            signal: AbortSignal.timeout(15000),
-          });
+          );
           if (response.ok) {
             const data = (await response.json()) as {
-              choices?: Array<{ message?: { content?: string } }>;
+              candidates?: Array<{
+                content?: { parts?: Array<{ text?: string }> };
+              }>;
             };
-            const candidate = cleanCuteResponse(data.choices?.[0]?.message?.content ?? "");
+            const candidate = cleanResponse(
+              data.candidates?.[0]?.content?.parts
+                ?.map((p) => p.text ?? "")
+                .join("") ?? "",
+            );
             if (candidate) {
               answer = candidate;
-              break;
+              setActiveBrainLabel(GEMINI_MODEL);
             }
           }
         } catch {
-          // Try next fallback model
+          // Try server route next
         }
       }
-    }
 
-    // 2. Try Python backend /api/chat if direct OpenRouter was skipped or failed
-    if (!answer) {
-      try {
-        const response = await fetch(`${API_BASE}/api/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: nextMessages.slice(-10) }),
-          signal: AbortSignal.timeout(30000),
-        });
-        if (response.ok) {
-          const data = (await response.json()) as { message: string };
-          answer = data.message.trim();
+      // 2. Next.js Server Route (/api/chat)
+      if (!answer) {
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages: nextMessages.slice(-8) }),
+            signal: AbortSignal.timeout(14000),
+          });
+          if (response.ok) {
+            const data = (await response.json()) as {
+              message?: string;
+              model?: string;
+            };
+            const candidate = cleanResponse(data.message ?? "");
+            if (candidate) {
+              answer = candidate;
+              if (data.model) setActiveBrainLabel(data.model);
+            }
+          }
+        } catch {
+          // Try OpenRouter or Local AI next
         }
-      } catch {
-        // Fall through
       }
-    }
 
-    // 3. Try Local Ollama direct
-    if (!answer) {
-      try {
-        const response = await fetch("http://127.0.0.1:11434/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "qwen3:4b",
-            stream: false,
-            messages: [
-              { role: "system", content: systemPrompt },
-              ...nextMessages.slice(-8),
-            ],
-            options: { num_predict: 140 },
-          }),
-          signal: AbortSignal.timeout(45000),
-        });
-        if (response.ok) {
-          const data = (await response.json()) as { message?: { content?: string } };
-          answer = data.message?.content?.trim() ?? "";
+      // 3. Direct OpenRouter Fallback
+      if (!answer && OPENROUTER_API_KEY) {
+        for (const modelToTry of FALLBACK_MODELS) {
+          if (answer) break;
+          try {
+            const response = await fetch(
+              "https://openrouter.ai/api/v1/chat/completions",
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+                  "Content-Type": "application/json",
+                  "HTTP-Referer": "http://localhost:3088",
+                  "X-Title": "REYA Robot AI",
+                },
+                body: JSON.stringify({
+                  model: modelToTry,
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    ...nextMessages
+                      .slice(-8)
+                      .map((m) => ({ role: m.role, content: m.content })),
+                  ],
+                  max_tokens: 130,
+                  temperature: 0.8,
+                }),
+                signal: AbortSignal.timeout(12000),
+              },
+            );
+            if (response.ok) {
+              const data = (await response.json()) as {
+                choices?: Array<{ message?: { content?: string } }>;
+              };
+              const candidate = cleanResponse(
+                data.choices?.[0]?.message?.content ?? "",
+              );
+              if (candidate) {
+                answer = candidate;
+                setActiveBrainLabel(modelToTry);
+                break;
+              }
+            }
+          } catch {
+            // Try next fallback model
+          }
         }
-      } catch {
-        // Fall through
       }
-    }
 
-    if (!answer) {
-      answer = fallbackAnswer(text);
-    }
+      // 4. Local Python AI Backend
+      if (!answer) {
+        try {
+          const response = await fetch(`${API_BASE}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages: nextMessages.slice(-10) }),
+            signal: AbortSignal.timeout(15000),
+          });
+          if (response.ok) {
+            const data = (await response.json()) as { message: string };
+            answer = cleanResponse(data.message);
+          }
+        } catch {
+          // Fall through
+        }
+      }
 
-    const assistantMessage: Message = { role: "assistant", content: answer };
-    setMessages((current) => [...current, assistantMessage]);
-    setThinking(false);
-    void speak(answer);
-  }, [input, messages, speak, thinking]);
+      if (!answer) {
+        answer = fallbackAnswer(text);
+      }
+
+      const assistantMessage: Message = { role: "assistant", content: answer };
+      setMessages((current) => [...current, assistantMessage]);
+      setThinking(false);
+      void speak(answer);
+    },
+    [input, messages, speak, thinking],
+  );
 
   const startBrowserRecognition = useCallback(() => {
     if (isSpeakingRef.current) return;
@@ -1046,9 +1626,12 @@ export default function Home() {
       SpeechRecognition?: new () => SpeechRecognitionLike;
       webkitSpeechRecognition?: new () => SpeechRecognitionLike;
     };
-    const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+    const Recognition =
+      speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
     if (!Recognition) {
-      showToast("Pengenalan suara browser tidak tersedia. Ketik pesan saja ya.");
+      showToast(
+        "Pengenalan suara browser tidak tersedia. Silakan ketik pesan.",
+      );
       setListening(false);
       return;
     }
@@ -1076,7 +1659,8 @@ export default function Home() {
   }, [askRobot, showToast]);
 
   const stopLocalRecording = useCallback(() => {
-    if (micRecorderRef.current?.state === "recording") micRecorderRef.current.stop();
+    if (micRecorderRef.current?.state === "recording")
+      micRecorderRef.current.stop();
   }, []);
 
   const startListening = useCallback(async () => {
@@ -1100,11 +1684,16 @@ export default function Home() {
       recorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
         setListening(false);
-        const blob = new Blob(micChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const blob = new Blob(micChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
         const form = new FormData();
         form.append("audio", blob, "ucapan.webm");
         try {
-          const response = await fetch(`${API_BASE}/api/stt`, { method: "POST", body: form });
+          const response = await fetch(`${API_BASE}/api/stt`, {
+            method: "POST",
+            body: form,
+          });
           if (!response.ok) throw new Error("STT gagal");
           const data = (await response.json()) as { text: string };
           setInput(data.text);
@@ -1122,7 +1711,14 @@ export default function Home() {
     } catch {
       startBrowserRecognition();
     }
-  }, [askRobot, health.stt, listening, showToast, startBrowserRecognition, stopLocalRecording]);
+  }, [
+    askRobot,
+    health.stt,
+    listening,
+    showToast,
+    startBrowserRecognition,
+    stopLocalRecording,
+  ]);
 
   useEffect(() => {
     listenRef.current = () => void startListening();
@@ -1132,10 +1728,12 @@ export default function Home() {
     setVoiceChatMode((prev) => {
       const next = !prev;
       if (next) {
-        showToast("🎙 Mode Ngobrol Suara Aktif! Bicara langsung tanpa tekan tombol.");
-        void speak("Hai! Mode obrolan suara aktif. Silakan bicara kapan saja!");
+        showToast("Mode obrolan suara aktif. Silakan bicara langsung.");
+        void speak(
+          "Hai! Mode obrolan suara aktif. Silakan bicara kapan saja!",
+        );
       } else {
-        showToast("Mode ngobrol suara dimatikan.");
+        showToast("Mode obrolan suara dimatikan.");
       }
       return next;
     });
@@ -1149,7 +1747,14 @@ export default function Home() {
     recognizerRef.current?.close();
     recognizerRef.current = null;
     const context = canvasRef.current?.getContext("2d");
-    if (context && canvasRef.current) context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    if (context && canvasRef.current) {
+      context.clearRect(
+        0,
+        0,
+        canvasRef.current.width,
+        canvasRef.current.height,
+      );
+    }
     setCameraOn(false);
     setGesture("None");
     setGestureScore(0);
@@ -1165,12 +1770,16 @@ export default function Home() {
     setCameraError("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: "user",
+        },
         audio: false,
       });
       streamRef.current = stream;
       const video = videoRef.current;
-      if (!video) throw new Error("Video tidak tersedia");
+      if (!video) throw new Error("Elemen video tidak tersedia");
       video.srcObject = stream;
       await video.play();
 
@@ -1182,7 +1791,10 @@ export default function Home() {
       let recognizer: GestureRecognizer;
       try {
         recognizer = await GestureRecognizer.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: "/models/gesture_recognizer.task", delegate: "GPU" },
+          baseOptions: {
+            modelAssetPath: "/models/gesture_recognizer.task",
+            delegate: "GPU",
+          },
           runningMode: "VIDEO",
           numHands: 2,
           minHandDetectionConfidence: 0.55,
@@ -1191,7 +1803,10 @@ export default function Home() {
         });
       } catch {
         recognizer = await GestureRecognizer.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: "/models/gesture_recognizer.task", delegate: "CPU" },
+          baseOptions: {
+            modelAssetPath: "/models/gesture_recognizer.task",
+            delegate: "CPU",
+          },
           runningMode: "VIDEO",
           numHands: 2,
         });
@@ -1203,15 +1818,20 @@ export default function Home() {
         const activeVideo = videoRef.current;
         const activeRecognizer = recognizerRef.current;
         if (!activeVideo || !activeRecognizer || !streamRef.current) return;
-        if (activeVideo.readyState >= 2 && activeVideo.currentTime !== lastVideoTimeRef.current) {
+        if (
+          activeVideo.readyState >= 2 &&
+          activeVideo.currentTime !== lastVideoTimeRef.current
+        ) {
           lastVideoTimeRef.current = activeVideo.currentTime;
 
           if (activeVideo.videoWidth && activeVideo.videoHeight) {
-            const aspect = activeVideo.videoWidth / activeVideo.videoHeight;
-            setCameraAspect(aspect);
+            setCameraAspect(activeVideo.videoWidth / activeVideo.videoHeight);
           }
 
-          const result = await activeRecognizer.recognizeForVideo(activeVideo, performance.now());
+          const result = await activeRecognizer.recognizeForVideo(
+            activeVideo,
+            performance.now(),
+          );
 
           const hands: HandInfo[] = [];
           const allLandmarks: Landmark[][] = [];
@@ -1220,7 +1840,10 @@ export default function Home() {
           for (let i = 0; i < (result.landmarks?.length ?? 0); i++) {
             const topGesture = result.gestures?.[i]?.[0];
             const landmarks = result.landmarks[i] as Landmark[];
-            const hd = (result.handedness as Array<Array<{ categoryName: string }>>)?.[i]?.[0]?.categoryName ?? "Right";
+            const hd =
+              (
+                result.handedness as Array<Array<{ categoryName: string }>>
+              )?.[i]?.[0]?.categoryName ?? "Right";
 
             allLandmarks.push(landmarks);
             allHandedness.push(hd);
@@ -1238,7 +1861,9 @@ export default function Home() {
             handleHandMusic(hands, performance.now());
           } else {
             const canvas = canvasRef.current;
-            canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+            canvas
+              ?.getContext("2d")
+              ?.clearRect(0, 0, canvas.width, canvas.height);
             setHandPositions({});
           }
 
@@ -1260,20 +1885,28 @@ export default function Home() {
     } catch (error) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
-      setCameraError(error instanceof Error ? error.message : "Kamera tidak dapat diakses");
+      setCameraError(
+        error instanceof Error
+          ? `${error.message}. Izinkan akses kamera di pengaturan browser lalu coba lagi.`
+          : "Kamera tidak dapat diakses. Periksa izin browser.",
+      );
       setCameraOn(false);
     } finally {
       setCameraLoading(false);
     }
   }, [cameraOn, drawHands, handleHandMusic, runGestureAction, stopCamera]);
 
-  useEffect(() => () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    recognizerRef.current?.close();
-    if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    if (noteReleaseTimerRef.current) window.clearTimeout(noteReleaseTimerRef.current);
-    if (audioContextRef.current) void audioContextRef.current.close();
-  }, []);
+  useEffect(
+    () => () => {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      recognizerRef.current?.close();
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      if (noteReleaseTimerRef.current)
+        window.clearTimeout(noteReleaseTimerRef.current);
+      if (audioContextRef.current) void audioContextRef.current.close();
+    },
+    [],
+  );
 
   const recordCustomVoice = useCallback(async () => {
     if (voiceRecorderRef.current?.state === "recording") {
@@ -1290,436 +1923,952 @@ export default function Home() {
       recorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
         setVoiceRecording(false);
-        const rawBlob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const rawBlob = new Blob(voiceChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
         try {
           setVoiceBlob(await convertRecordingToWav(rawBlob));
-          showToast("Contoh suara tersimpan");
+          showToast("Contoh suara 6 detik tersimpan.");
         } catch {
           setVoiceBlob(rawBlob);
-          showToast("Contoh suara tersimpan dalam format asli");
+          showToast("Contoh suara tersimpan.");
         }
       };
       voiceRecorderRef.current = recorder;
       setVoiceRecording(true);
       recorder.start();
-      showToast("Merekam suara selama 6 detik…");
+      showToast("Merekam contoh suara selama 6 detik...");
       window.setTimeout(() => {
         if (recorder.state === "recording") recorder.stop();
       }, 6000);
     } catch {
       setVoiceRecording(false);
-      showToast("Mikrofon tidak dapat diakses");
+      showToast("Mikrofon tidak dapat diakses.");
     }
   }, [showToast]);
 
   const saveCustomVoice = useCallback(async () => {
     if (!voiceBlob || !voiceTranscript.trim()) {
-      showToast("Rekam suara dan tulis kalimat yang diucapkan");
+      showToast("Rekam suara terlebih dahulu dan isi kalimat transkrip.");
       return;
     }
     setVoiceSaving(true);
-    const form = new FormData();
-    form.append("name", voiceName.trim() || "Suara Saya");
-    form.append("transcript", voiceTranscript.trim());
-    form.append("audio", voiceBlob, voiceBlob.type === "audio/wav" ? "referensi.wav" : "referensi.webm");
     try {
-      const response = await fetch(`${API_BASE}/api/voices`, { method: "POST", body: form });
+      // 1. If Voicebox is active/online, register profile and sample in jamiepine/voicebox
+      if (voiceEngine === "voicebox" && voiceboxOnline) {
+        const baseUrl = voiceboxUrl.replace(/\/+$/, "");
+        const createRes = await fetch(`${baseUrl}/profiles`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: voiceName.trim() || "Suara REYA Custom",
+            language: "id",
+            description: "Dibuat dari konsol web REYA",
+          }),
+        });
+        if (createRes.ok) {
+          const created = (await createRes.json()) as { id?: string };
+          if (created.id) {
+            const sampleForm = new FormData();
+            sampleForm.append(
+              "file",
+              voiceBlob,
+              voiceBlob.type === "audio/wav" ? "sample.wav" : "sample.webm",
+            );
+            sampleForm.append("reference_text", voiceTranscript.trim());
+            await fetch(`${baseUrl}/profiles/${created.id}/samples`, {
+              method: "POST",
+              body: sampleForm,
+            });
+            setVoiceboxProfileId(created.id);
+            await probeVoicebox(baseUrl);
+            setVoiceModal(false);
+            showToast("Profil kloning suara berhasil disimpan ke Voicebox.");
+            return;
+          }
+        }
+      }
+
+      // 2. Save to local Python AI server
+      const form = new FormData();
+      form.append("name", voiceName.trim() || "Suara Saya");
+      form.append("transcript", voiceTranscript.trim());
+      form.append(
+        "audio",
+        voiceBlob,
+        voiceBlob.type === "audio/wav" ? "referensi.wav" : "referensi.webm",
+      );
+      const response = await fetch(`${API_BASE}/api/voices`, {
+        method: "POST",
+        body: form,
+      });
       if (!response.ok) throw new Error("Server suara belum siap");
       const data = (await response.json()) as { voice_id: string };
       setVoiceEngine("qwen");
       setVoiceProfile(data.voice_id);
       setVoiceModal(false);
-      showToast("Suara custom siap dipakai");
+      showToast("Suara custom siap digunakan.");
     } catch {
-      showToast("Nyalakan server AI lokal untuk menyimpan suara custom");
+      showToast(
+        "Jalankan aplikasi Voicebox (port 17493) atau server AI lokal untuk menyimpan kloning suara.",
+      );
     } finally {
       setVoiceSaving(false);
     }
-  }, [showToast, voiceBlob, voiceName, voiceTranscript]);
+  }, [
+    probeVoicebox,
+    showToast,
+    voiceBlob,
+    voiceEngine,
+    voiceName,
+    voiceTranscript,
+    voiceboxOnline,
+    voiceboxUrl,
+  ]);
 
-  const activeMusicMode = musicModes.find((mode) => mode.id === musicMode) ?? musicModes[0];
+  const activeMusicMode =
+    musicModes.find((mode) => mode.id === musicMode) ?? musicModes[0];
 
   const scaleLabels = useMemo(() => {
     if (musicMode === "drums" || musicMode === "beats") {
       return activeMusicMode.drumLabels ?? [];
     }
-    return melodyScale.filter((_, i) => i % 2 === 0 || i === melodyScale.length - 1).map((n) => n.name);
+    return melodyScale
+      .filter((_, i) => i % 2 === 0 || i === melodyScale.length - 1)
+      .map((n) => n.name);
   }, [musicMode, activeMusicMode]);
 
   const startMusicTutorial = useCallback(() => {
     startMusic();
     if (!cameraOn) void startCamera();
-    const modeInfo = musicModes.find((mode) => mode.id === musicModeRef.current) ?? musicModes[0];
+    const modeInfo =
+      musicModes.find((mode) => mode.id === musicModeRef.current) ??
+      musicModes[0];
     speakRef.current(
-      `Yay, ayo main ${modeInfo.name}! Buka telapak tanganmu untuk mulai. Angkat tangan tinggi untuk nada tinggi dan turunkan untuk nada rendah. ` +
-      `Pakai dua tangan sekaligus — kiri untuk bass, kanan untuk melodi. ` +
-      `Tunjukkan dua jari untuk ganti mode, dan kepalkan tangan untuk berhenti. Jempol ke atas untuk efek boost!`,
+      `Ayo kita mainkan ${modeInfo.name}! Buka telapak tanganmu di depan kamera untuk mulai, lalu angkat tinggi untuk nada tinggi dan turunkan untuk nada rendah. Kamu juga bisa menyentuh area matriks nada secara langsung.`,
     );
-    document.getElementById("music-lab")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    document
+      .getElementById("music-lab")
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [cameraOn, startCamera, startMusic]);
+
+  const activeVoiceLabel = useMemo(() => {
+    if (voiceEngine === "voicebox") {
+      const found = voiceboxProfiles.find((p) => p.id === voiceboxProfileId);
+      return found
+        ? `Voicebox · ${found.name}`
+        : voiceboxOnline
+        ? `Voicebox · ${voiceboxProfileId}`
+        : "Voicebox · Auto Indo";
+    }
+    if (voiceEngine === "supertonic") return `Supertonic · ${voiceProfile}`;
+    if (voiceEngine === "qwen")
+      return `Qwen · ${voiceProfile.replace("clone:", "")}`;
+    return "Browser Speech";
+  }, [
+    voiceEngine,
+    voiceProfile,
+    voiceboxOnline,
+    voiceboxProfileId,
+    voiceboxProfiles,
+  ]);
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="REYA beranda">
-          <span className="brand-mark">R</span>
-          <span><b>REYA</b><small>Robot AI Lokal</small></span>
+        <a className="brand" href="#top" aria-label="REYA beranda konsol">
+          <span className="brand-mark">R1</span>
+          <span className="brand-text">
+            <b>REYA // UNIT-01</b>
+            <small>Robot AI Lokal &amp; Synth</small>
+          </span>
         </a>
-        <div className="top-status">
-          <span className={`live-dot ${OPENROUTER_API_KEY || health.ollama ? "connected" : ""}`} />
-          <span>{statusText}</span>
+
+        <div className="telemetry-strip" role="status" aria-live="polite">
+          <div className="telemetry-item">
+            <span className="status-led online" />
+            <span className="mono">API: {activeBrainLabel}</span>
+          </div>
+          <span className="telemetry-divider" aria-hidden="true" />
+          <div className="telemetry-item">
+            <span
+              className={`status-led ${
+                voiceboxOnline || health.natural_tts ? "online" : ""
+              }`}
+            />
+            <span className="mono">
+              VOICE:{" "}
+              {voiceboxOnline
+                ? "VOICEBOX :17493"
+                : "VOICEBOX / INDO STREAM"}
+            </span>
+          </div>
         </div>
+
         <div className="topbar-actions">
           <button
-            className={`ghost-button voice-chat-toggle ${voiceChatMode ? "active" : ""}`}
+            type="button"
+            className={`hw-button ${voiceChatMode ? "active-green" : ""}`}
             onClick={toggleVoiceChatMode}
-            title="Ngobrol suara hands-free seperti telepon"
           >
-            <span className="button-icon">🎙</span> {voiceChatMode ? "Obrolan Suara Aktif" : "Mode Suara"}
+            <IconMic />
+            <span>{voiceChatMode ? "Auto-Mic Aktif" : "Mode Suara"}</span>
           </button>
-          <button className="ghost-button" onClick={() => setVoiceModal(true)}>
-            <span className="button-icon">◉</span> Studio Suara
+          <button
+            type="button"
+            className="hw-button"
+            onClick={() => {
+              setVoiceModal(true);
+              void probeVoicebox();
+            }}
+          >
+            <IconSpeaker />
+            <span>Studio Suara</span>
+          </button>
+          <button
+            type="button"
+            className="hw-button"
+            onClick={toggleTheme}
+            aria-label={
+              theme === "light"
+                ? "Ganti ke tema Studio Malam"
+                : "Ganti ke tema Chassis Terang"
+            }
+          >
+            <IconTheme dark={theme === "dark"} />
+            <span>{theme === "light" ? "Malam" : "Terang"}</span>
           </button>
         </div>
       </header>
 
-      <div className={`dashboard ${cameraExpanded ? "camera-expanded-view" : ""}`} id="top">
-        <section className="robot-stage panel">
-          <div className="stage-copy">
-            <span className="eyebrow">TEMAN CERDAS DI PERANGKATMU</span>
-            <h1>Halo, aku <em>REYA.</em></h1>
-            <p>Ngobrol suara cepat dengan OpenRouter AI, melihat gesture tanganmu full-screen, dan bermain musik.</p>
-            <div className="privacy-badges">
-              <span>⚡ OpenRouter Cepat</span>
-              <span>Bahasa Indonesia</span>
-              <span>Kamera Adaptif</span>
-              <span>Musik 2 Tangan</span>
+      <div
+        className={`console-grid ${cameraExpanded ? "camera-expanded" : ""}`}
+        id="top"
+      >
+        {/* MOD-01: ROBOT ACOUSTIC UNIT & LIVE DIALOG */}
+        <section className="hw-module" aria-labelledby="mod01-heading">
+          <div className="module-index-bar">
+            <span className="module-id">
+              <span className="screw-dot" />
+              MOD-01 // DIALOG &amp; VOICEBOX UNIT
+            </span>
+            <span className="module-id">GEMINI-ARGON READY</span>
+          </div>
+
+          <div className="robot-deck">
+            <RobotCRTUnit
+              speaking={speaking}
+              listening={listening}
+              thinking={thinking}
+              mood={mood}
+            />
+
+            <div className="robot-info-column">
+              <div className="robot-headline">
+                <h1 id="mod01-heading">Halo, aku REYA.</h1>
+                <p>
+                  Konsol robot AI berbahasa Indonesia dengan otak Gemini Flash,
+                  sintesis suara Voicebox, dan instrumen musik dua tangan.
+                </p>
+              </div>
+
+              <div className="spec-readout-grid">
+                <div className="spec-cell">
+                  <small>MODEL OTAK</small>
+                  <strong className="mono">{activeBrainLabel}</strong>
+                </div>
+                <div className="spec-cell">
+                  <small>MESIN SUARA</small>
+                  <strong className="mono">{activeVoiceLabel}</strong>
+                </div>
+              </div>
+
+              <div className="mood-selector-row">
+                {[
+                  { id: 0, label: "01 CERIA" },
+                  { id: 1, label: "02 KALEM" },
+                  { id: 2, label: "03 FOKUS" },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`mood-chip ${mood === item.id ? "active" : ""}`}
+                    onClick={() => setMood(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="hw-button"
+                  onClick={() =>
+                    void speak(
+                      "Halo! Aku REYA. Suaraku terhubung dengan Voicebox dan siap menemanimu ngobrol atau bermain musik!",
+                    )
+                  }
+                >
+                  <IconSpeaker />
+                  <span>Uji Suara</span>
+                </button>
+              </div>
             </div>
           </div>
-          <RobotFace speaking={speaking} listening={listening} thinking={thinking} mood={mood} />
-          <div className="robot-caption">
-            <span className={`wave-mini ${speaking || listening ? "active" : ""}`}><i /><i /><i /><i /><i /></span>
-            {speaking
-              ? "REYA sedang berbicara…"
-              : thinking
-              ? "REYA sedang berpikir cepat…"
-              : listening
-              ? "Aku mendengarkanmu lewat mic…"
-              : voiceChatMode
-              ? "Mode obrolan suara aktif — silakan bicara kapan saja!"
-              : "Coba buka telapak tangan ✋ untuk musik atau klik mic untuk ngobrol"}
-          </div>
-        </section>
 
-        <aside className="control-rail">
-          <section className={`camera-card panel ${cameraOn ? "camera-active" : ""} ${cameraExpanded ? "is-expanded" : ""}`}>
-            <div className="card-heading">
-              <div>
-                <span className="section-kicker">MATA REYA</span>
-                <h2>Gesture tangan</h2>
-              </div>
-              <div className="camera-heading-actions">
-                <button
-                  className={`camera-expand-btn ${cameraExpanded ? "active" : ""}`}
-                  onClick={() => setCameraExpanded((prev) => !prev)}
-                  title={cameraExpanded ? "Perkecil tampilan kamera" : "Perbesar tampilan kamera (Full View)"}
-                  aria-label="Mode layar kamera"
-                >
-                  {cameraExpanded ? "⤡ Normal" : "⛶ Full"}
-                </button>
-                <button
-                  className={`switch ${cameraOn ? "on" : ""}`}
-                  onClick={() => void startCamera()}
-                  aria-label="Aktifkan kamera"
-                  aria-pressed={cameraOn}
-                >
-                  <span />
-                </button>
-              </div>
+          <div className="dialog-section">
+            <div className="dialog-header">
+              <h2>Obrolan Langsung</h2>
+              <span className="module-id">
+                {speaking
+                  ? "STATUS: MENGELUARKAN SUARA"
+                  : thinking
+                  ? "STATUS: MEMPROSES JAWABAN"
+                  : listening
+                  ? "STATUS: MEREKAM MIKROFON"
+                  : "STATUS: SIAP MENERIMA PESAN"}
+              </span>
             </div>
 
-            <div
-              className={`camera-window ${cameraExpanded ? "full-aspect" : ""}`}
-              style={cameraAspect && !cameraExpanded ? { aspectRatio: `${cameraAspect}` } : undefined}
+            <div className="messages-well" aria-live="polite">
+              {messages.slice(-6).map((message, index) => (
+                <div
+                  className={`message-row ${message.role}`}
+                  key={`${message.role}-${index}-${message.content.slice(0, 12)}`}
+                >
+                  <span className="message-tag">
+                    {message.role === "assistant" ? "R1" : "U"}
+                  </span>
+                  <p className="message-bubble">{message.content}</p>
+                </div>
+              ))}
+              {thinking && (
+                <div className="message-row assistant">
+                  <span className="message-tag">R1</span>
+                  <p className="message-bubble mono">
+                    Memproses respons lewat {activeBrainLabel}...
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="prompt-strip">
+              {[
+                "Jelaskan cara kerja AI secara singkat",
+                "Bagaimana cara main musik pakai tangan?",
+                "Apa keunggulan mesin suara Voicebox?",
+              ].map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  className="prompt-pill"
+                  onClick={() => void askRobot(suggestion)}
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+
+            <form
+              className={`composer-bar ${listening ? "recording" : ""}`}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void askRobot();
+              }}
             >
-              <video ref={videoRef} muted playsInline />
-              <canvas ref={canvasRef} />
-              {cameraOn && musicPlaying && (
-                <div className="camera-music-overlay-v" aria-hidden="true">
-                  <span className="zone-label zone-high">↑ nada tinggi</span>
-                  <span className="zone-label zone-low">↓ nada rendah</span>
-                  {handPositions.right?.playing && (
-                    <div
-                      className="cam-hand-dot melody"
-                      style={{ top: `${handPositions.right.y * 100}%`, left: `${(1 - handPositions.right.x) * 100}%` }}
-                    >
-                      <span>{handPositions.right.note}</span>
-                    </div>
-                  )}
-                  {handPositions.left?.playing && (
-                    <div
-                      className="cam-hand-dot bass"
-                      style={{ top: `${handPositions.left.y * 100}%`, left: `${(1 - handPositions.left.x) * 100}%` }}
-                    >
-                      <span>{handPositions.left.note}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-              {!cameraOn && (
-                <div className="camera-empty">
-                  <span className="scan-hand">✋</span>
-                  <strong>{cameraLoading ? "Menyiapkan AI kamera…" : "Kamera belum aktif"}</strong>
-                  <small>{cameraError || "Aktifkan untuk deteksi tangan full frame"}</small>
-                </div>
-              )}
-              {cameraOn && (
-                <div className="camera-badges-top">
-                  <span className="local-label"><i /> Kamera Full View</span>
-                  {cameraAspect && <span className="res-badge">{cameraAspect > 1.5 ? "16:9 HD" : "4:3"}</span>}
-                </div>
-              )}
-            </div>
-
-            <div className="gesture-result">
-              <div className="gesture-symbol">
-                {gesture === "Thumb_Up" ? "👍" : gesture === "Victory" ? "✌️" : gesture === "Closed_Fist" ? "✊" : gesture === "Pointing_Up" ? "☝️" : gesture === "ILoveYou" ? "🤟" : gesture === "Open_Palm" ? "✋" : "👋"}
-              </div>
-              <div>
-                <small>TERDETEKSI</small>
-                <strong>{gestureLabels[gesture] ?? gesture}</strong>
-              </div>
-              <b>{Math.round(gestureScore * 100)}%</b>
-            </div>
-          </section>
-
-          <section className="quick-grid">
-            <button className={`quick-card music-card ${musicPlaying ? "active" : ""}`} onClick={() => {
-              if (musicPlaying) stopMusic();
-              else startMusicTutorial();
-              document.getElementById("music-lab")?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }}>
-              <span className="quick-icon">♫</span>
-              <span><small>MUSIK GESTURE</small><strong>{musicPlaying ? activeMusicMode.name : "Main pakai tangan"}</strong></span>
-              <i className="equalizer"><b /><b /><b /></i>
-            </button>
-            <button className="quick-card voice-card" onClick={() => setVoiceModal(true)}>
-              <span className="quick-icon">◉</span>
-              <span><small>SUARA REYA</small><strong>{voiceEngine === "supertonic" ? "F2 · REYA Cute" : voiceEngine === "qwen" ? voiceProfile.replace("clone:", "") : "Suara browser"}</strong></span>
-              <i className="arrow">↗</i>
-            </button>
-          </section>
-        </aside>
-
-        <section className={`music-lab panel ${musicPlaying ? "active" : ""}`} id="music-lab">
-          <div className="music-lab-head">
-            <div>
-              <span className="section-kicker">MUSIK GESTURE · DUA TANGAN</span>
-              <h2>Mainkan Musik dengan Tanganmu</h2>
-              <p>Angkat tangan tinggi untuk nada tinggi, turunkan untuk rendah. Pakai dua tangan untuk harmoni.</p>
-            </div>
-            <div className="music-session-actions">
-              <span className={`music-live-status ${musicPlaying ? "active" : ""}`}><i />{musicPlaying ? "Sensor aktif" : "Belum dimainkan"}</span>
-              <button className={musicPlaying ? "stop" : ""} onClick={() => {
-                if (musicPlaying) stopMusic();
-                else startMusicTutorial();
-              }}>{musicPlaying ? "Selesai bermain" : "Mulai bermain"}</button>
-            </div>
-          </div>
-
-          <div className="music-mode-tabs" role="tablist" aria-label="Mode musik">
-            {musicModes.map((mode) => (
               <button
-                className={musicMode === mode.id ? "active" : ""}
-                key={mode.id}
-                onClick={() => selectMusicMode(mode.id)}
-                role="tab"
-                aria-selected={musicMode === mode.id}
+                type="button"
+                className={`hw-button ${listening ? "primary" : ""}`}
+                onClick={() => void startListening()}
+                aria-label={
+                  listening
+                    ? "Hentikan perekaman mikrofon"
+                    : "Bicara dengan REYA lewat mikrofon"
+                }
               >
-                <span>{mode.icon}</span>
-                <strong>{mode.name}</strong>
-                <small>{mode.caption}</small>
+                <IconMic />
+                <span>{listening ? "Stop Mic" : "Bicara"}</span>
               </button>
-            ))}
-          </div>
-
-          <div className="music-playground">
-            <div className="instrument-board">
-              <div className="instrument-status">
-                <span>{activeMusicMode.icon}</span>
-                <div><small>SEKARANG</small><strong aria-live="polite">{lastPlayedLabel}</strong></div>
-              </div>
-
-              <div className="pitch-field">
-                <div className="pitch-gradient" />
-                <div className="pitch-scale-labels">
-                  {scaleLabels.map((label, i) => (
-                    <span key={`${label}-${i}`} style={{ top: `${(1 - i / (scaleLabels.length - 1)) * 100}%` }}>{label}</span>
-                  ))}
-                </div>
-                {handPositions.right?.playing && (
-                  <div className="hand-dot melody" style={{ top: `${handPositions.right.y * 100}%`, left: `${(1 - handPositions.right.x) * 100}%` }}>
-                    <span className="hand-dot-label">{handPositions.right.note}</span>
-                    <span className="hand-dot-tag">Melody</span>
-                  </div>
-                )}
-                {handPositions.left?.playing && (
-                  <div className="hand-dot bass" style={{ top: `${handPositions.left.y * 100}%`, left: `${(1 - handPositions.left.x) * 100}%` }}>
-                    <span className="hand-dot-label">{handPositions.left.note}</span>
-                    <span className="hand-dot-tag">Bass</span>
-                  </div>
-                )}
-                <div className="hand-info-row">
-                  <span className="hand-info-chip melody">🎵 Kanan{handPositions.right?.playing ? `: ${handPositions.right.note}` : ""}</span>
-                  <span className="hand-info-chip bass">🎸 Kiri{handPositions.left?.playing ? `: ${handPositions.left.note}` : ""}</span>
-                </div>
-              </div>
-
-              <div className="hand-axis"><span>↓ rendah</span><b>naik-turunkan tanganmu</b><span>↑ tinggi</span></div>
-            </div>
-
-            <aside className="music-instructions">
-              <div className="instruction-title"><span>?</span><div><small>PETUNJUK MODE</small><strong>{activeMusicMode.name}</strong></div></div>
-              <p>{activeMusicMode.instruction}</p>
-              <ol>
-                <li><b>1</b><span>Nyalakan kamera, lalu buka <strong>✋ telapak tangan</strong> untuk mulai.</span></li>
-                <li><b>2</b><span>Angkat <strong>☝️ telunjuk</strong> dan gerakkan tangan <strong>naik-turun</strong> untuk ubah nada.</span></li>
-                <li><b>3</b><span><strong>👍 Boost</strong> volume · <strong>✌️</strong> ganti mode · <strong>🤟</strong> drop · <strong>✊</strong> stop.</span></li>
-              </ol>
-              <button onClick={startMusicTutorial}><span>◉</span> Dengar petunjuk REYA</button>
-              <small className="music-privacy">Kamera dan bunyi diproses langsung di browser kamu.</small>
-            </aside>
+              <input
+                className="composer-input"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={
+                  listening
+                    ? "Mendengarkan suaramu..."
+                    : "Tulis pesan untuk REYA atau tekan tombol Bicara..."
+                }
+                aria-label="Pesan untuk REYA"
+              />
+              <button
+                className="hw-button primary send-btn"
+                type="submit"
+                disabled={!input.trim() || thinking}
+              >
+                <span>Kirim Pesan</span>
+              </button>
+            </form>
           </div>
         </section>
 
-        <section className="conversation panel">
-          <div className="conversation-head">
+        {/* MOD-02: OPTICAL HAND-TRACKING SENSOR */}
+        <aside className="hw-module" aria-labelledby="mod02-heading">
+          <div className="module-index-bar">
+            <span className="module-id">
+              <span className="screw-dot" />
+              MOD-02 // OPTICAL HAND SENSOR
+            </span>
+            <span className="module-id">MEDIAPIPE 2-HAND</span>
+          </div>
+
+          <div className="camera-header">
             <div>
-              <span className="section-kicker">OBROLAN REAL-TIME</span>
-              <h2>Bicara Cepat dengan REYA</h2>
+              <h2 id="mod02-heading">Sensor Gerakan Tangan</h2>
             </div>
-            <div className="brain-chip-group">
+            <div className="camera-controls">
               <button
-                className={`voice-mode-btn ${voiceChatMode ? "active" : ""}`}
-                onClick={toggleVoiceChatMode}
+                type="button"
+                className="hw-button"
+                onClick={() => setCameraExpanded((prev) => !prev)}
+                aria-label="Ubah ukuran layar kamera"
               >
-                <span>🎙</span> {voiceChatMode ? "Mode Mic Aktif" : "Auto-Mic"}
+                <span>{cameraExpanded ? "Ukuran Normal" : "Perbesar"}</span>
               </button>
-              <div className="brain-chip">
-                <span>⚡</span> {OPENROUTER_API_KEY ? "OpenRouter Free" : health.model || "Demo"}
-              </div>
+              <button
+                type="button"
+                className={`hw-button ${cameraOn ? "active-green" : "primary"}`}
+                onClick={() => void startCamera()}
+                aria-pressed={cameraOn}
+              >
+                <IconCamera />
+                <span>{cameraOn ? "Kamera Aktif" : "Nyalakan Kamera"}</span>
+              </button>
             </div>
           </div>
 
-          <div className="messages" aria-live="polite">
-            {messages.slice(-4).map((message, index) => (
-              <div className={`message ${message.role}`} key={`${message.role}-${index}-${message.content.slice(0, 10)}`}>
-                {message.role === "assistant" && <span className="message-avatar">R</span>}
-                <p>{message.content}</p>
+          <div
+            className={`viewfinder ${cameraExpanded ? "expanded" : ""}`}
+            style={
+              cameraAspect && !cameraExpanded
+                ? { aspectRatio: `${cameraAspect}` }
+                : undefined
+            }
+          >
+            <video ref={videoRef} muted playsInline />
+            <canvas ref={canvasRef} />
+
+            {cameraOn && (
+              <div className="viewfinder-hud-top">
+                <span className="hud-tag">OPTICAL TRACKING ON</span>
+                {cameraAspect && (
+                  <span className="hud-tag">
+                    {cameraAspect > 1.5 ? "16:9 HD" : "4:3"}
+                  </span>
+                )}
               </div>
-            ))}
-            {thinking && (
-              <div className="message assistant">
-                <span className="message-avatar">R</span>
-                <p className="typing">
-                  <span>REYA sedang berpikir</span>
-                  <i></i><i></i><i></i>
+            )}
+
+            {!cameraOn && (
+              <div className="viewfinder-state">
+                <IconCamera />
+                <strong>
+                  {cameraLoading
+                    ? "Menyiapkan model pelacak tangan..."
+                    : cameraError
+                    ? "Kamera gagal diaktifkan"
+                    : "Sensor optik belum aktif"}
+                </strong>
+                <p>
+                  {cameraError ||
+                    "Klik tombol Nyalakan Kamera di kanan atas untuk mengendalikan synthesizer dengan gerakan jari dan telapak tangan."}
                 </p>
               </div>
             )}
           </div>
 
-          <div className="suggestions">
-            {["Ceritakan lelucon lucu", "Bagaimana cara main musik tangan?", "Kamu punya fitur apa saja?"].map((suggestion) => (
-              <button key={suggestion} onClick={() => void askRobot(suggestion)}>{suggestion}</button>
+          <div className="gesture-telemetry-bar">
+            <div className="gesture-code-box">
+              {gestureCodes[gesture] ?? "HAND"}
+            </div>
+            <div className="gesture-readout">
+              <small>GESTURE TERDETEKSI</small>
+              <strong>{gestureLabels[gesture] ?? gesture}</strong>
+            </div>
+            <div className="confidence-meter">
+              {Math.round(gestureScore * 100)}%
+            </div>
+          </div>
+
+          <div className="quick-actions-row">
+            <button
+              type="button"
+              className={`hw-button ${musicPlaying ? "active-green" : ""}`}
+              onClick={() => {
+                if (musicPlaying) stopMusic();
+                else startMusicTutorial();
+              }}
+            >
+              <IconWave />
+              <span>
+                {musicPlaying ? "Matikan Synth" : "Mainkan Musik"}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="hw-button"
+              onClick={() => {
+                setVoiceModal(true);
+                void probeVoicebox();
+              }}
+            >
+              <IconSpeaker />
+              <span>Konfigurasi Voicebox</span>
+            </button>
+          </div>
+        </aside>
+
+        {/* MOD-03: POLYPHONIC GESTURE SYNTH DECK */}
+        <section
+          className="hw-module synth-module"
+          id="music-lab"
+          aria-labelledby="mod03-heading"
+        >
+          <div className="module-index-bar">
+            <span className="module-id">
+              <span className="screw-dot" />
+              MOD-03 // POLYPHONIC GESTURE SYNTHESIZER
+            </span>
+            <span className="module-id">
+              {musicPlaying ? "AUDIO ENGINE: ACTIVE" : "AUDIO ENGINE: STANDBY"}
+            </span>
+          </div>
+
+          <div className="synth-top-row">
+            <div>
+              <h2 id="mod03-heading">Mainkan Musik dengan Tanganmu</h2>
+              <p>
+                Gunakan gerakan tangan di depan kamera atau sentuh dan geser
+                langsung kanvas matriks 2D di bawah untuk memainkan nada.
+              </p>
+            </div>
+            <div className="camera-controls">
+              <button
+                type="button"
+                className={`hw-button ${
+                  musicPlaying ? "primary" : "active-green"
+                }`}
+                onClick={() => {
+                  if (musicPlaying) stopMusic();
+                  else startMusic();
+                }}
+              >
+                <IconWave />
+                <span>
+                  {musicPlaying ? "Hentikan Sesi Musik" : "Aktifkan Mesin Synth"}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div
+            className="synth-bank-tabs"
+            role="tablist"
+            aria-label="Bank instrumen musik"
+          >
+            {musicModes.map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                role="tab"
+                aria-selected={musicMode === mode.id}
+                className={`bank-tab ${musicMode === mode.id ? "active" : ""}`}
+                onClick={() => selectMusicMode(mode.id)}
+              >
+                <span className="bank-tab-code">{mode.bankCode}</span>
+                <strong>{mode.name}</strong>
+              </button>
             ))}
           </div>
 
-          <form className={`composer ${listening ? "is-recording" : ""}`} onSubmit={(event) => { event.preventDefault(); void askRobot(); }}>
-            <button
-              type="button"
-              className={`mic-button ${listening ? "recording" : ""} ${voiceChatMode ? "in-voice-mode" : ""}`}
-              onClick={() => void startListening()}
-              aria-label="Bicara dengan REYA lewat mic"
-              title={listening ? "Sedang mendengarkan... klik untuk selesai" : "Klik untuk bicara dengan mic"}
-            >
-              {listening ? "■" : "🎙"}
-            </button>
-            <input
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={listening ? "Sedang mendengarkan suaramu…" : "Ketik atau bicara langsung lewat mic…"}
-              aria-label="Pesan untuk REYA"
-            />
-            <button className="send-button" type="submit" disabled={!input.trim() || thinking}>
-              Kirim <span>→</span>
-            </button>
-          </form>
+          <div className="synth-workstation">
+            <div className="pitch-matrix-frame">
+              <div className="matrix-status-strip">
+                <span className="mono">{lastPlayedLabel}</span>
+                <span className="mono">
+                  KANAN: {handPositions.right?.note || "--"} | KIRI:{" "}
+                  {handPositions.left?.note || "--"}
+                </span>
+              </div>
 
-          <div className="gesture-guide">
-            <span><b>✋</b> Mulai</span>
-            <span><b>☝️</b> Mainkan</span>
-            <span><b>👍</b> Boost</span>
-            <span><b>✌️</b> Mode</span>
-            <span><b>🤟</b> Drop</span>
-            <span><b>✊</b> Stop</span>
+              <div
+                ref={pitchFieldRef}
+                className="pitch-field"
+                role="application"
+                aria-label="Matriks 2D tinggi nada dan filter. Klik atau geser untuk membunyikan instrumen."
+                onPointerDown={(event) => {
+                  pointerDownRef.current = true;
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  triggerMatrixCoordinate(
+                    (event.clientX - rect.left) / rect.width,
+                    (event.clientY - rect.top) / rect.height,
+                  );
+                }}
+                onPointerMove={(event) => {
+                  if (!pointerDownRef.current) return;
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  triggerMatrixCoordinate(
+                    (event.clientX - rect.left) / rect.width,
+                    (event.clientY - rect.top) / rect.height,
+                  );
+                }}
+                onPointerUp={() => {
+                  pointerDownRef.current = false;
+                }}
+                onPointerCancel={() => {
+                  pointerDownRef.current = false;
+                }}
+              >
+                <div className="pitch-scale-labels">
+                  {scaleLabels.map((label, i) => (
+                    <div
+                      className="pitch-line"
+                      key={`${label}-${i}`}
+                      style={{
+                        top: `${(1 - i / Math.max(1, scaleLabels.length - 1)) * 100}%`,
+                      }}
+                    >
+                      <span>{label}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {handPositions.right?.playing && (
+                  <div
+                    className="hand-node melody"
+                    style={{
+                      top: `${handPositions.right.y * 100}%`,
+                      left: `${(1 - handPositions.right.x) * 100}%`,
+                    }}
+                  >
+                    <strong>{handPositions.right.note}</strong>
+                    <small>LEAD</small>
+                  </div>
+                )}
+
+                {handPositions.left?.playing && (
+                  <div
+                    className="hand-node bass"
+                    style={{
+                      top: `${handPositions.left.y * 100}%`,
+                      left: `${(1 - handPositions.left.x) * 100}%`,
+                    }}
+                  >
+                    <strong>{handPositions.left.note}</strong>
+                    <small>BASS</small>
+                  </div>
+                )}
+              </div>
+
+              <div className="matrix-footer">
+                <span>SUMBU Y: FREKUENSI NADA (BAWAH = RENDAH, ATAS = TINGGI)</span>
+                <span>SUMBU X: FILTER CUTOFF (500 HZ SAMPAI 5000 HZ)</span>
+              </div>
+            </div>
+
+            <aside className="synth-guide-card">
+              <div>
+                <span className="module-id">{activeMusicMode.bankCode}</span>
+                <h3>{activeMusicMode.name}</h3>
+                <p>{activeMusicMode.instruction}</p>
+              </div>
+
+              <ul className="gesture-spec-list">
+                <li>
+                  <code>TELAPAK</code>
+                  <span>Aktifkan sensor &amp; mainkan akor mayor</span>
+                </li>
+                <li>
+                  <code>TELUNJUK</code>
+                  <span>Mainkan melodi mengikuti tinggi tangan</span>
+                </li>
+                <li>
+                  <code>2 JARI</code>
+                  <span>Pindah ke bank instrumen berikutnya</span>
+                </li>
+                <li>
+                  <code>KEPAL</code>
+                  <span>Hentikan seluruh keluaran suara synth</span>
+                </li>
+              </ul>
+
+              <button
+                type="button"
+                className="hw-button"
+                onClick={startMusicTutorial}
+              >
+                <IconSpeaker />
+                <span>Dengar Panduan Suara REYA</span>
+              </button>
+            </aside>
           </div>
         </section>
       </div>
 
+      {/* STUDIO SUARA & VOICEBOX CONFIGURATION MODAL */}
       {voiceModal && (
         <div className="modal-backdrop">
-          <section className="voice-modal" role="dialog" aria-modal="true" aria-labelledby="voice-title">
-            <button className="close-button" onClick={() => setVoiceModal(false)} aria-label="Tutup">×</button>
-            <span className="modal-icon">◉</span>
-            <span className="section-kicker">SUARA & AI MODEL</span>
-            <h2 id="voice-title">Pilih Suara REYA</h2>
-            <p>REYA menggunakan model OpenRouter untuk respon cepat, dipadukan dengan mesin suara natural.</p>
-            <div className="engine-tabs">
-              <button className={voiceEngine === "supertonic" ? "active" : ""} onClick={() => changeVoiceEngine("supertonic")}>Natural Indo</button>
-              <button className={voiceEngine === "qwen" ? "active" : ""} onClick={() => changeVoiceEngine("qwen")}>Custom Qwen</button>
-              <button className={voiceEngine === "browser" ? "active" : ""} onClick={() => changeVoiceEngine("browser")}>Browser</button>
-            </div>
-            <label className="field-label">Karakter suara
-              <select value={voiceProfile.startsWith("clone:") ? "custom" : voiceProfile} onChange={(event) => event.target.value !== "custom" && setVoiceProfile(event.target.value)} disabled={voiceEngine === "browser"}>
-                {voiceEngine === "supertonic" ? <>
-                  <option value="F2">REYA Cute — ceria, muda & playful</option>
-                  <option value="F5">REYA Calm — lembut & tenang</option>
-                  <option value="F1">F1 — kalem & dewasa</option>
-                  <option value="F3">F3 — jelas & profesional</option>
-                  <option value="F4">F4 — percaya diri & ekspresif</option>
-                </> : <>
-                  <option value="Serena">Serena — hangat & lembut</option>
-                  <option value="Vivian">Vivian — muda & ceria</option>
-                  <option value="Aiden">Aiden — cerah & jelas</option>
-                  <option value="Ryan">Ryan — dinamis</option>
-                  {voiceProfile.startsWith("clone:") && <option value="custom">{voiceProfile.replace("clone:", "")} — custom</option>}
-                </>}
-              </select>
-            </label>
-            {voiceEngine === "qwen" && <label className="field-label">Gaya bicara
-              <input value={voiceStyle} onChange={(event) => setVoiceStyle(event.target.value)} />
-            </label>}
-            {voiceEngine === "qwen" && <div className="clone-box">
-              <div><strong>Clone suaramu</strong><small>Gunakan suara milikmu sendiri atau suara yang kamu punya izin untuk gunakan.</small></div>
-              <div className="clone-row">
-                <input value={voiceName} onChange={(event) => setVoiceName(event.target.value)} placeholder="Nama suara" />
-                <button onClick={() => void recordCustomVoice()} className={voiceRecording ? "recording" : ""}>{voiceRecording ? "■ Selesai" : voiceBlob ? "✓ Rekam ulang" : "● Rekam 6 detik"}</button>
+          <section
+            className="voice-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="voice-title"
+          >
+            <div className="modal-top">
+              <div>
+                <span className="module-id">KONFIGURASI SINTESIS SUARA</span>
+                <h2 id="voice-title">Studio Suara &amp; Voicebox</h2>
               </div>
-              <textarea value={voiceTranscript} onChange={(event) => setVoiceTranscript(event.target.value)} placeholder="Tulis persis kalimat yang kamu ucapkan saat merekam…" rows={2} />
-              <button className="save-voice" onClick={() => void saveCustomVoice()} disabled={voiceSaving}>{voiceSaving ? "Menyimpan…" : "Simpan suara custom"}</button>
-            </div>}
-            <div className="modal-note"><span>i</span>{voiceEngine === "supertonic" ? "REYA Cute memakai karakter F2 yang ceria, playful, muda, dan cocok untuk suara karakter. Modelnya resmi mendukung Bahasa Indonesia dan berjalan lokal di CPU." : voiceEngine === "qwen" ? "Qwen memakai mode otomatis karena Bahasa Indonesia belum tercantum sebagai bahasa resminya; paling cocok untuk eksperimen custom voice." : "Kualitas suara browser menggunakan sintesis suara bawaan sistem operasi."}</div>
-            <button className="primary-wide" onClick={() => { setVoiceModal(false); void speak("Hai! Aku REYA. Suaraku siap diajak ngobrol cepat dan seru!"); }}>Dengar contoh suara</button>
+              <button
+                type="button"
+                className="hw-button"
+                onClick={() => setVoiceModal(false)}
+                aria-label="Tutup jendela Studio Suara"
+              >
+                <span>Tutup</span>
+              </button>
+            </div>
+
+            <div className="engine-tabs" role="tablist">
+              <button
+                type="button"
+                className={voiceEngine === "voicebox" ? "active" : ""}
+                onClick={() => changeVoiceEngine("voicebox")}
+              >
+                Voicebox Studio
+              </button>
+              <button
+                type="button"
+                className={voiceEngine === "supertonic" ? "active" : ""}
+                onClick={() => changeVoiceEngine("supertonic")}
+              >
+                Natural Indo
+              </button>
+              <button
+                type="button"
+                className={voiceEngine === "qwen" ? "active" : ""}
+                onClick={() => changeVoiceEngine("qwen")}
+              >
+                Custom Qwen
+              </button>
+              <button
+                type="button"
+                className={voiceEngine === "browser" ? "active" : ""}
+                onClick={() => changeVoiceEngine("browser")}
+              >
+                Browser
+              </button>
+            </div>
+
+            {voiceEngine === "voicebox" && (
+              <div className="voicebox-panel">
+                <div className="voicebox-status-row">
+                  <div className="telemetry-item">
+                    <span
+                      className={`status-led ${voiceboxOnline ? "online" : ""}`}
+                    />
+                    <strong className="mono">
+                      {voiceboxOnline
+                        ? "VOICEBOX TERHUBUNG"
+                        : "VOICEBOX OFFLINE (FALLBACK AKTIF)"}
+                    </strong>
+                  </div>
+                  <span className="module-id">jamiepine/voicebox</span>
+                </div>
+
+                <div className="field-group">
+                  <label htmlFor="vb-url-input">ENDPOINT SERVER VOICEBOX</label>
+                  <div className="url-input-row">
+                    <input
+                      id="vb-url-input"
+                      className="field-input mono"
+                      value={voiceboxUrl}
+                      onChange={(event) => setVoiceboxUrl(event.target.value)}
+                      placeholder="http://127.0.0.1:17493"
+                    />
+                    <button
+                      type="button"
+                      className="hw-button"
+                      onClick={() => void probeVoicebox(voiceboxUrl, true)}
+                      disabled={voiceboxChecking}
+                    >
+                      <span>
+                        {voiceboxChecking ? "Mengecek..." : "Cek Koneksi"}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="field-group">
+                  <label htmlFor="vb-profile-select">
+                    PROFIL SUARA VOICEBOX (GET /profiles)
+                  </label>
+                  {voiceboxProfiles.length > 0 ? (
+                    <select
+                      id="vb-profile-select"
+                      className="field-input"
+                      value={voiceboxProfileId}
+                      onChange={(event) =>
+                        setVoiceboxProfileId(event.target.value)
+                      }
+                    >
+                      {voiceboxProfiles.map((prof) => (
+                        <option key={prof.id} value={prof.id}>
+                          {prof.name} ({prof.language || "id"})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id="vb-profile-select"
+                      className="field-input mono"
+                      value={voiceboxProfileId}
+                      onChange={(event) =>
+                        setVoiceboxProfileId(event.target.value)
+                      }
+                      placeholder="Masukkan ID atau nama profil Voicebox (contoh: default)"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {(voiceEngine === "supertonic" || voiceEngine === "qwen") && (
+              <div className="field-group">
+                <label htmlFor="local-profile-select">KARAKTER SUARA LOKAL</label>
+                <select
+                  id="local-profile-select"
+                  className="field-input"
+                  value={
+                    voiceProfile.startsWith("clone:") ? "custom" : voiceProfile
+                  }
+                  onChange={(event) =>
+                    event.target.value !== "custom" &&
+                    setVoiceProfile(event.target.value)
+                  }
+                >
+                  {voiceEngine === "supertonic" ? (
+                    <>
+                      <option value="F2">
+                        F2 : REYA Cute (Ceria, muda, Bahasa Indonesia)
+                      </option>
+                      <option value="F5">F5 : REYA Calm (Lembut &amp; tenang)</option>
+                      <option value="F1">F1 : Kalem &amp; dewasa</option>
+                      <option value="F3">F3 : Jelas &amp; artikulatif</option>
+                      <option value="F4">F4 : Ekspresif</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="Serena">Serena : Hangat &amp; lembut</option>
+                      <option value="Vivian">Vivian : Muda &amp; ceria</option>
+                      <option value="Aiden">Aiden : Jernih</option>
+                      <option value="Ryan">Ryan : Dinamis</option>
+                      {voiceProfile.startsWith("clone:") && (
+                        <option value="custom">
+                          {voiceProfile.replace("clone:", "")} (Custom Clone)
+                        </option>
+                      )}
+                    </>
+                  )}
+                </select>
+              </div>
+            )}
+
+            {(voiceEngine === "voicebox" || voiceEngine === "qwen") && (
+              <>
+                <div className="field-group">
+                  <label htmlFor="voice-style-input">
+                    INSTRUKSI GAYA BICARA (INSTRUCT)
+                  </label>
+                  <input
+                    id="voice-style-input"
+                    className="field-input"
+                    value={voiceStyle}
+                    onChange={(event) => setVoiceStyle(event.target.value)}
+                  />
+                </div>
+
+                <div className="voicebox-panel">
+                  <strong>Buat Profil Kloning Suara Baru</strong>
+                  <div className="url-input-row">
+                    <input
+                      className="field-input"
+                      value={voiceName}
+                      onChange={(event) => setVoiceName(event.target.value)}
+                      placeholder="Contoh: Suara Reyhan"
+                      aria-label="Nama profil suara baru"
+                    />
+                    <button
+                      type="button"
+                      className={`hw-button ${voiceRecording ? "primary" : ""}`}
+                      onClick={() => void recordCustomVoice()}
+                    >
+                      <IconMic />
+                      <span>
+                        {voiceRecording
+                          ? "Berhenti"
+                          : voiceBlob
+                          ? "Rekam Ulang"
+                          : "Rekam 6 Detik"}
+                      </span>
+                    </button>
+                  </div>
+                  <textarea
+                    className="field-input"
+                    value={voiceTranscript}
+                    onChange={(event) => setVoiceTranscript(event.target.value)}
+                    placeholder="Tulis kalimat persis yang diucapkan saat merekam contoh suara..."
+                    rows={2}
+                  />
+                  <button
+                    type="button"
+                    className="hw-button"
+                    onClick={() => void saveCustomVoice()}
+                    disabled={voiceSaving}
+                  >
+                    <span>
+                      {voiceSaving
+                        ? "Menyimpan Profil..."
+                        : "Simpan Profil Kloning Suara"}
+                    </span>
+                  </button>
+                </div>
+              </>
+            )}
+
+            <div style={{ marginTop: "18px", display: "flex", gap: "10px" }}>
+              <button
+                type="button"
+                className="hw-button primary"
+                style={{ width: "100%" }}
+                onClick={() => {
+                  setVoiceModal(false);
+                  void speak(
+                    "Halo! Ini adalah uji suara REYA dari konsol Studio Suara.",
+                  );
+                }}
+              >
+                <IconSpeaker />
+                <span>Simpan &amp; Uji Suara REYA</span>
+              </button>
+            </div>
           </section>
         </div>
       )}
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
     </main>
   );
-}
-
-function isDrumLike(mode: MusicModeId) {
-  return mode === "drums" || mode === "beats";
 }

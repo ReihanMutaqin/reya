@@ -36,20 +36,22 @@ test("server-renders the REYA application", async () => {
   assert.doesNotMatch(html, /Your site is taking shape/i);
 });
 
-test("keeps Natural Indo as the local default", async () => {
+test("integrates Voicebox and Gemini Flash alongside Natural Indo", async () => {
   const [page, layout, server] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../local-ai/server.py", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /useState<VoiceEngine>\("supertonic"\)/);
+  assert.match(page, /useState<VoiceEngine>\("voicebox"\)/);
   assert.match(page, /useState\("F2"\)/);
-  assert.match(page, />Natural Indo<\/button>/);
+  assert.match(page, />\s*Voicebox Studio\s*<\/button>/);
+  assert.match(page, />\s*Natural Indo\s*<\/button>/);
+  assert.match(page, /gemini-flash-latest/);
   assert.match(page, /Mainkan Musik/);
   assert.match(page, /handleHandMusic/);
-  assert.match(layout, /title:\s*"REYA — Robot AI Lokal Indonesia"/);
-  assert.match(server, /engine:\s*Literal\["supertonic",\s*"qwen"\]\s*=\s*"supertonic"/);
+  assert.match(layout, /title:\s*"REYA : Robot AI Lokal Indonesia"/);
+  assert.match(server, /engine:\s*Literal\["supertonic",\s*"qwen",\s*"voicebox"\]\s*=\s*"supertonic"/);
   assert.match(server, /speaker:\s*str\s*=\s*"F2"/);
   assert.match(server, /lang="id"/);
   assert.match(server, /else 1\.06/);

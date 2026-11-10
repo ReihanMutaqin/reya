@@ -1,32 +1,29 @@
-# REYA — Robot AI Lokal Indonesia
+# REYA : Robot AI Lokal Indonesia
 
-REYA sudah dibuat sebagai aplikasi lokal dengan wajah animasi, percakapan Bahasa Indonesia, kamera gesture tangan, musik gesture (nada mengikuti ketinggian tangan), pengenalan suara, suara cute Supertonic, serta Qwen3-TTS/voice clone.
+REYA adalah konsol robot AI berbahasa Indonesia bergaya instrumen perangkat keras studio (Tactile Studio Hardware) yang memadukan otak **Gemini Flash (`gemini-flash-latest`)**, sintesis suara **Voicebox (`jamiepine/voicebox`)**, kamera pelacak 2 tangan MediaPipe, dan synthesizer musik polifonik 2D.
 
-## Cara mulai
+## Cara memulai
 
-1. Ekstrak folder REYA.
-2. Pasang aplikasi gratis berikut bila belum ada: Node.js, Python 3.12, dan Ollama.
-3. Buka folder hasil ekstrak. Jalankan `local-ai\install-natural-voice.ps1` untuk suara natural saja, atau `local-ai\install.ps1` untuk semua fitur AI.
-4. Jalankan `start-raya.ps1`.
-5. Izinkan akses kamera dan mikrofon.
+1. Pastikan **Node.js 22+** sudah terpasang.
+2. Untuk mengaktifkan suara dari **Voicebox (`https://github.com/jamiepine/voicebox`)**:
+   - Jalankan aplikasi desktop atau backend Voicebox sehingga server aktif di `http://127.0.0.1:17493`.
+   - Buka tombol **Studio Suara** di bar atas REYA, pilih tab **Voicebox Studio**, lalu klik **Cek Koneksi** untuk memuat daftar profil suara dari `GET /profiles`.
+   - Bila Voicebox belum dinyalakan, REYA otomatis beralih ke mesin suara cadangan Bahasa Indonesia agar tetap bersuara tanpa gangguan.
+3. Untuk menjalankan server lokal tambahan (opsional Supertonic F2 / Qwen3-TTS / Whisper STT):
+   - Jalankan `local-ai\install-natural-voice.ps1` atau `local-ai\install.ps1`.
+4. Jalankan `start-raya.ps1` atau `npm run dev` lalu buka `http://localhost:3088`.
 
-REYA tetap bisa dibuka dalam mode demo sebelum model lengkap dipasang. Untuk laptop tanpa GPU, pilih **Studio Suara → Natural Indo → REYA Cute**. Pemasang akan mengunduh model suara sekitar 400 MB sekali saja, lalu model berjalan lokal tanpa biaya.
+## Konfigurasi API Gemini (Argon / Flash Latest)
 
-## Kontrol gesture
+REYA dikonfigurasi menggunakan endpoint resmi Google Generative Language API:
+- Endpoint: `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent`
+- Header autentikasi: `X-goog-api-key` di `.env` dan `.env.local` (`GEMINI_API_KEY` dan `NEXT_PUBLIC_GEMINI_API_KEY`).
 
-- 👍 mengaktifkan musik
-- ☝️ nada mengikuti ketinggian tangan — tinggi = nada tinggi
-- ✋ memainkan chord sesuai posisi tangan
-- ✌️ mengganti mode musik
-- ✊ atau 👎 menghentikan musik
-- 🤟 memainkan chord kejutan
+## Kontrol gerakan tangan & synthesizer 2D
 
-## Cara bermain musik
-
-1. Aktifkan kamera lalu tunjukkan 👍.
-2. Angkat tangan kanan tinggi untuk nada tinggi, turunkan untuk nada rendah. Geser kiri-kanan untuk brightness dan stereo.
-3. Gunakan tangan kiri untuk bass — kontrol sama seperti tangan kanan tapi di oktaf rendah.
-4. Buka ✋ untuk chord, ✌️ untuk mode berikutnya, serta ✊ untuk berhenti.
-5. Tombol **Dengar petunjuk REYA** akan membacakan tutorial sesuai mode yang dipilih.
-
-Suara bawaan memakai **F2 REYA Cute**, karakter perempuan yang ceria, playful, muda, dan resmi mendukung Bahasa Indonesia. **Custom Qwen** tetap tersedia untuk eksperimen, tetapi Bahasa Indonesia belum termasuk bahasa resmi Qwen3-TTS. Mode **Perangkat** hanya cadangan dan kualitasnya bergantung pada Windows/browser. Voice clone hanya boleh digunakan dengan suara milik sendiri atau suara yang Anda punya izin untuk gunakan.
+- **Telapak Terbuka**: Mengaktifkan mesin synthesizer dan memainkan akor mayor.
+- **Telunjuk Naik**: Memainkan nada melodi sesuai ketinggian tangan (kanan = melodi, kiri = bass).
+- **Dua Jari (Victory)**: Berpindah ke bank instrumen berikutnya (`BANK 01` sampai `BANK 05`).
+- **Jempol Naik**: Memberikan lonjakan volume (Boost).
+- **Tangan Mengepal**: Menghentikan seluruh keluaran suara synthesizer.
+- **Sentuh / Geser Matriks 2D**: Anda juga dapat langsung mengklik atau menggeser kursor di kanvas matriks 2D pada **MOD-03** untuk membunyikan instrumen tanpa kamera.
