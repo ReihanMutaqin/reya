@@ -455,7 +455,8 @@ button {
   align-items: center;
   justify-content: center;
   gap: 34px;
-  transition: transform 0.25s ease;
+  transition: transform 0.08s ease-out;
+  will-change: transform;
   z-index: 2;
 }
 
@@ -484,7 +485,11 @@ button {
   border-radius: 8px;
   background: var(--crt-primary);
   position: relative;
-  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: width 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+    height 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+    border-radius 0.25s ease,
+    background-color 0.25s ease,
+    transform 0.15s ease;
   box-shadow: 0 0 12px rgba(232, 244, 122, 0.35);
   overflow: hidden;
 }
@@ -501,31 +506,17 @@ button {
 
 .crt-pupil {
   position: absolute;
-  top: 5px;
-  left: 5px;
-  width: 9px;
-  height: 11px;
-  border-radius: 3px;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 12px;
+  margin-top: -6px;
+  margin-left: -5px;
+  border-radius: 3.5px;
   background: #161A18;
-  transition: transform 0.08s ease-out;
+  transition: transform 0.06s ease-out, width 0.2s ease, height 0.2s ease;
   pointer-events: none;
   will-change: transform;
-}
-
-.crt-eye:has(.crt-pupil)::after {
-  display: none;
-}
-
-.crt-eye::after {
-  content: "";
-  position: absolute;
-  top: 5px;
-  left: 5px;
-  width: 9px;
-  height: 11px;
-  border-radius: 3px;
-  background: #161A18;
-  transition: all 0.2s ease;
 }
 
 /* Sleep Eyes (- -) */
@@ -537,8 +528,7 @@ button {
   box-shadow: 0 0 12px rgba(155, 163, 255, 0.7);
 }
 
-.eyes-sleep .crt-pupil,
-.eyes-sleep .crt-eye::after {
+.eyes-sleep .crt-pupil {
   display: none !important;
 }
 
@@ -551,12 +541,11 @@ button {
   transform: scale(0.94);
 }
 
-.eyes-yawn .crt-pupil,
-.eyes-yawn .crt-eye::after {
-  top: 3px;
-  left: 5px;
-  width: 6px;
+.eyes-yawn .crt-pupil {
+  width: 7px;
   height: 6px;
+  margin-top: -3px;
+  margin-left: -3.5px;
 }
 
 /* Curious / Smiling Eyes (^ ^) */
@@ -574,12 +563,11 @@ button {
   box-shadow: 0 0 18px rgba(255, 255, 255, 0.9);
 }
 
-.eyes-poked .crt-pupil,
-.eyes-poked .crt-eye::after {
-  top: 10px;
-  left: 10px;
+.eyes-poked .crt-pupil {
   width: 12px;
   height: 12px;
+  margin-top: -6px;
+  margin-left: -6px;
   border-radius: 50%;
 }
 

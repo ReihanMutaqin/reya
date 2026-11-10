@@ -1239,6 +1239,7 @@ function RobotCRTUnit({
   const [gaze, setGaze] = useState({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
   const lastActiveRef = useRef(lastActivity);
   const screenRef = useRef<HTMLDivElement>(null);
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
 
   let idleState: "active" | "curious" | "yawn" | "sleep" = "active";
   if (poked) {
@@ -1254,9 +1255,7 @@ function RobotCRTUnit({
   }
 
   useEffect(() => {
-    let resetTimer: number | null = null;
-
-    const handlePointerMove = (e: MouseEvent | PointerEvent) => {
+    const computeGazeFromPoint = (clientX: number, clientY: number) => {
       if (idleState === "sleep") {
         setGaze({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
         return;
@@ -1266,31 +1265,30 @@ function RobotCRTUnit({
       if (!screenEl) return;
       const rect = screenEl.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
+      const centerY = rect.top + rect.height * 0.42;
 
-      const dx = e.clientX - centerX;
-      const dy = e.clientY - centerY;
+      const dx = clientX - centerX;
+      const dy = clientY - centerY;
       const dist = Math.hypot(dx, dy);
 
-      if (dist < 4) {
+      if (dist < 3) {
         setGaze({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
         return;
       }
 
-      const angle = Math.atan2(dy, dx);
-      const maxViewportDist = Math.max(window.innerWidth, window.innerHeight) * 0.55;
-      const intensity = Math.min(dist / maxViewportDist, 1);
-      const power = Math.pow(intensity, 0.72);
+      const angle = Math.atan2(dy * 1.35, dx);
+      const factor = Math.tanh(dist / 160);
 
-      const maxEyeX = 6.5;
-      const maxEyeY = 4.8;
-      const maxPupilX = 4.5;
-      const maxPupilY = 3.8;
+      const maxEyeX = 11.5;
+      const maxEyeY = 9.5;
+      const maxPupilX = 7.0;
+      const maxPupilY =
+        idleState === "yawn" ? 3.0 : idleState === "curious" ? 6.8 : 8.5;
 
-      const eyeX = Math.cos(angle) * power * maxEyeX;
-      const eyeY = Math.sin(angle) * power * maxEyeY;
-      const pupilX = Math.cos(angle) * power * maxPupilX;
-      const pupilY = Math.sin(angle) * power * maxPupilY;
+      const eyeX = Math.cos(angle) * factor * maxEyeX;
+      const eyeY = Math.sin(angle) * factor * maxEyeY;
+      const pupilX = Math.cos(angle) * factor * maxPupilX;
+      const pupilY = Math.sin(angle) * factor * maxPupilY;
 
       setGaze({
         eyeX: Math.round(eyeX * 10) / 10,
@@ -1298,17 +1296,41 @@ function RobotCRTUnit({
         pupilX: Math.round(pupilX * 10) / 10,
         pupilY: Math.round(pupilY * 10) / 10,
       });
-
-      if (resetTimer) window.clearTimeout(resetTimer);
-      resetTimer = window.setTimeout(() => {
-        setGaze({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
-      }, 4000);
     };
 
-    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    if (lastPointerRef.current) {
+      computeGazeFromPoint(lastPointerRef.current.x, lastPointerRef.current.y);
+    }
+
+    const handlePointerMove = (e: MouseEvent | PointerEvent) => {
+      lastPointerRef.current = { x: e.clientX, y: e.clientY };
+      computeGazeFromPoint(e.clientX, e.clientY);
+    };
+
+    const handleScroll = () => {
+      if (lastPointerRef.current) {
+        computeGazeFromPoint(
+          lastPointerRef.current.x,
+          lastPointerRef.current.y
+        );
+      }
+    };
+
+    const handleMouseLeave = () => {
+      setGaze({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, {
+      passive: true,
+    });
+    window.addEventListener("mousemove", handlePointerMove, { passive: true });
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    document.addEventListener("mouseleave", handleMouseLeave);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
-      if (resetTimer) window.clearTimeout(resetTimer);
+      window.removeEventListener("mousemove", handlePointerMove);
+      window.removeEventListener("scroll", handleScroll);
+      document.removeEventListener("mouseleave", handleMouseLeave);
     };
   }, [idleState]);
 
@@ -1418,7 +1440,9 @@ function RobotCRTUnit({
           } ${poked ? "eyes-poked is-poked" : ""}`}
           style={{
             transform: `translate(${gaze.eyeX}px, ${gaze.eyeY}px)${
-              idleState === "curious" ? " rotate(-3deg)" : ""
+              idleState === "curious" && gaze.eyeX === 0 && gaze.eyeY === 0
+                ? " rotate(-3deg)"
+                : ""
             }`,
           }}
         >
@@ -1448,6 +1472,11 @@ function RobotCRTUnit({
               ? "is-visible"
               : ""
           }`}
+          style={{
+            transform: `translate(${Math.round(gaze.eyeX * 4.5) / 10}px, ${
+              Math.round(gaze.eyeY * 4.5) / 10
+            }px)`,
+          }}
           aria-hidden="true"
         >
           <span className="cheek" />
@@ -1455,7 +1484,15 @@ function RobotCRTUnit({
         </div>
 
         {speaking ? (
-          <div className="crt-mouth is-speaking" aria-hidden="true">
+          <div
+            className="crt-mouth is-speaking"
+            style={{
+              transform: `translate(${Math.round(gaze.eyeX * 4.5) / 10}px, ${
+                Math.round(gaze.eyeY * 4.5) / 10
+              }px)`,
+            }}
+            aria-hidden="true"
+          >
             <span />
             <span />
             <span />
@@ -1463,12 +1500,25 @@ function RobotCRTUnit({
             <span />
           </div>
         ) : idleState === "yawn" ? (
-          <div className="crt-mouth-yawn" aria-hidden="true" />
+          <div
+            className="crt-mouth-yawn"
+            style={{
+              transform: `translate(${Math.round(gaze.eyeX * 4.5) / 10}px, ${
+                Math.round(gaze.eyeY * 4.5) / 10
+              }px)`,
+            }}
+            aria-hidden="true"
+          />
         ) : idleState === "sleep" ? (
           <div className="crt-mouth-sleep" aria-hidden="true" />
         ) : (
           <div
             className={`crt-mouth-smile ${poked ? "is-happy" : ""}`}
+            style={{
+              transform: `translate(${Math.round(gaze.eyeX * 4.5) / 10}px, ${
+                Math.round(gaze.eyeY * 4.5) / 10
+              }px)`,
+            }}
             aria-hidden="true"
           />
         )}
