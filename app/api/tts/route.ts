@@ -1,12 +1,25 @@
 import { NextResponse } from "next/server";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_VOICEBOX_URL =
   process.env.VOICEBOX_URL ||
   process.env.NEXT_PUBLIC_VOICEBOX_URL ||
   "http://127.0.0.1:17493";
 
-const GEMINI_TTS_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent";
+// Models supporting high-quality Gemini Neural TTS with AUDIO modality
+const GEMINI_TTS_MODELS = [
+  "gemini-3.8-flash-tts",
+  "gemini-3.8-flash-lite-tts",
+  "gemini-3.1-flash-tts-preview",
+  "gemini-2.5-flash-preview-tts",
+];
+
+// LRU cache for synthesized speech to provide instant playback and prevent quota exhaustion
+const ttsCache = new Map<string, { buffer: ArrayBuffer; contentType: string }>();
+const MAX_CACHE_SIZE = 120;
 
 function pcm16ToWav(
   pcmBuffer: Buffer,
@@ -81,7 +94,6 @@ async function tryVoiceboxTTS(
   const resolvedProfileId = await resolveVoiceboxProfileId(baseUrl, profileId);
 
   // 1. OpenAI-compatible endpoint in jamiepine/voicebox (/v1/audio/speech)
-  // Using model="tts-1" instructs Voicebox to pick default_engine_for_profile(profile).
   try {
     const speechPayload: Record<string, unknown> = {
       model: "tts-1",
@@ -112,8 +124,6 @@ async function tryVoiceboxTTS(
   }
 
   // 2. Native /generate endpoint in jamiepine/voicebox
-  // Note: Voicebox validates language against ^(zh|en|ja|ko|de|fr|ru|pt|es|it|he|ar|da|el|fi|hi|ms|nl|no|pl|sv|sw|tr)$
-  // so "ms" (Malay/Indonesian) and "en" are valid, whereas "id" returns HTTP 422.
   if (!resolvedProfileId) {
     return null;
   }
@@ -190,30 +200,33 @@ async function tryVoiceboxTTS(
   return null;
 }
 
+// Maps user speaker selection to Gemini prebuilt neural voices
+// "Aoede" is the premier bright, cheerful, lively soprano feminine voice.
+// "Zephyr" is the warm, natural, friendly conversational feminine voice.
 function mapSpeakerToGeminiVoice(speaker?: string): string {
-  switch (speaker) {
-    case "F5":
-    case "Serena":
-      return "Leda";
-    case "F1":
-      return "Aoede";
-    case "F3":
-    case "Aiden":
-      return "Kore";
-    case "F4":
-    case "Ryan":
-      return "Callirrhoe";
-    case "F2":
-    case "Vivian":
-    default:
-      return "Zephyr";
+  const norm = (speaker || "").toLowerCase().trim();
+  if (norm.includes("zephyr") || norm === "f1") {
+    return "Zephyr";
   }
+  if (norm.includes("kore") || norm === "f3" || norm.includes("aiden")) {
+    return "Kore";
+  }
+  if (norm.includes("leda") || norm === "f5" || norm.includes("serena")) {
+    return "Leda";
+  }
+  if (norm.includes("callirrhoe") || norm === "f4" || norm.includes("ryan")) {
+    return "Callirrhoe";
+  }
+  if (norm.includes("puck")) {
+    return "Puck";
+  }
+  // Default to Aoede for bright, cheerful, natural persona ("yang ceria nya")
+  return "Aoede";
 }
 
 async function tryGeminiNeuralTTS(
   text: string,
   speaker?: string,
-  instruct?: string,
 ): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
   const apiKey = (
     process.env.GEMINI_API_KEY ||
@@ -222,74 +235,156 @@ async function tryGeminiNeuralTTS(
   ).trim();
   if (!apiKey) return null;
 
-  const cleanText = text.replace(/[*_#`~]/g, "").trim().slice(0, 600);
+  const cleanText = text
+    .replace(/[*_#`~[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 600);
   if (!cleanText) return null;
 
   const voiceName = mapSpeakerToGeminiVoice(speaker);
-  const styleHint =
-    instruct?.trim() ||
-    "bicara dengan nada ramah, ekspresif, hangat, dan natural dalam Bahasa Indonesia sehari-hari";
+  const cacheKey = `gemini:${voiceName}:${cleanText}`;
 
-  try {
-    const res = await fetch(GEMINI_TTS_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: `Ucapkan kalimat berikut (${styleHint}): ${cleanText}`,
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName,
+  // Return cached audio if available
+  const cached = ttsCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  // Iterate over available Gemini TTS models in sequence
+  for (const model of GEMINI_TTS_MODELS) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: cleanText,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName,
+                },
               },
             },
           },
-        },
-      }),
-      signal: AbortSignal.timeout(12000),
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!res.ok) {
+        // Quota exceeded (429) or model busy, failover to next model
+        continue;
+      }
+
+      const data = (await res.json()) as {
+        candidates?: Array<{
+          content?: {
+            parts?: Array<{
+              inlineData?: {
+                mimeType?: string;
+                data?: string;
+              };
+            }>;
+          };
+        }>;
+      };
+
+      const inlineData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+      const b64 = inlineData?.data;
+      if (!b64 || b64.length < 100) continue;
+
+      const pcmBytes = Buffer.from(b64, "base64");
+      const wavArrayBuffer = pcm16ToWav(pcmBytes, 24000, 1);
+
+      const result = {
+        buffer: wavArrayBuffer,
+        contentType: "audio/wav",
+      };
+
+      // Store in memory cache
+      if (ttsCache.size >= MAX_CACHE_SIZE) {
+        const firstKey = ttsCache.keys().next().value;
+        if (firstKey) ttsCache.delete(firstKey);
+      }
+      ttsCache.set(cacheKey, result);
+
+      return result;
+    } catch {
+      // Continue to next model on network error / timeout
+      continue;
+    }
+  }
+
+  return null;
+}
+
+// Local Edge-TTS worker using Microsoft Neural Voice (id-ID-GadisNeural)
+// Gadis is an extraordinarily natural, cheerful, expressive young female Indonesian neural voice.
+async function tryLocalEdgeNeuralTTS(
+  text: string,
+): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
+  const cleanText = text
+    .replace(/[*_#`~[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+  if (!cleanText) return null;
+
+  const cacheKey = `edge:gadis:${cleanText}`;
+  const cached = ttsCache.get(cacheKey);
+  if (cached) return cached;
+
+  const pyCode = `
+import asyncio, sys, edge_tts
+async def run():
+    comm = edge_tts.Communicate(sys.argv[1], 'id-ID-GadisNeural')
+    chunks = []
+    async for chunk in comm.stream():
+        if chunk['type'] == 'audio':
+            chunks.append(chunk['data'])
+    sys.stdout.buffer.write(b''.join(chunks))
+asyncio.run(run())
+`;
+
+  try {
+    const { stdout } = await execFileAsync("python", ["-c", pyCode, cleanText], {
+      encoding: "buffer",
+      maxBuffer: 15 * 1024 * 1024,
+      timeout: 10000,
     });
 
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as {
-      candidates?: Array<{
-        content?: {
-          parts?: Array<{
-            inlineData?: {
-              mimeType?: string;
-              data?: string;
-            };
-          }>;
-        };
-      }>;
-    };
-
-    const inlineData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
-    const b64 = inlineData?.data;
-    if (!b64 || b64.length < 100) return null;
-
-    const pcmBytes = Buffer.from(b64, "base64");
-    const wavArrayBuffer = pcm16ToWav(pcmBytes, 24000, 1);
-
-    return {
-      buffer: wavArrayBuffer,
-      contentType: "audio/wav",
-    };
+    if (stdout && stdout.length > 500) {
+      const arrayBuf = stdout.buffer.slice(
+        stdout.byteOffset,
+        stdout.byteOffset + stdout.byteLength,
+      );
+      const result = {
+        buffer: arrayBuf,
+        contentType: "audio/mpeg",
+      };
+      if (ttsCache.size >= MAX_CACHE_SIZE) {
+        const firstKey = ttsCache.keys().next().value;
+        if (firstKey) ttsCache.delete(firstKey);
+      }
+      ttsCache.set(cacheKey, result);
+      return result;
+    }
   } catch {
-    return null;
+    // Local Python edge_tts unavailable
   }
+
+  return null;
 }
 
 async function tryFallbackIndoTTS(
@@ -348,20 +443,33 @@ export async function GET(request: Request) {
     }
   }
 
-  // 2. Natural Neural TTS via Argon Gemini 2.5 Flash Audio (Zephyr / Leda / Aoede)
-  const geminiAudio = await tryGeminiNeuralTTS(text, speaker, instruct);
+  // 2. High-quality Gemini Neural Audio TTS (Aoede - Ceria & Ekspresif / Zephyr - Hangat)
+  const geminiAudio = await tryGeminiNeuralTTS(text, speaker);
   if (geminiAudio) {
     return new Response(geminiAudio.buffer, {
       status: 200,
       headers: {
         "Content-Type": geminiAudio.contentType,
         "X-Voice-Provider": "gemini-neural-tts",
-        "Cache-Control": "no-store",
+        "Cache-Control": "public, max-age=86400",
       },
     });
   }
 
-  // 3. Last-resort fallback
+  // 3. Local Neural Edge-TTS (id-ID-GadisNeural: young cheerful Indonesian female voice)
+  const edgeAudio = await tryLocalEdgeNeuralTTS(text);
+  if (edgeAudio) {
+    return new Response(edgeAudio.buffer, {
+      status: 200,
+      headers: {
+        "Content-Type": edgeAudio.contentType,
+        "X-Voice-Provider": "edge-neural-gadis",
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+  }
+
+  // 4. Catastrophic safety net fallback
   const fallbackAudio = await tryFallbackIndoTTS(text);
   if (fallbackAudio) {
     return new Response(fallbackAudio.buffer, {
@@ -415,11 +523,10 @@ export async function POST(request: Request) {
       }
     }
 
-    // 2. Natural Neural TTS via Argon Gemini 2.5 Flash Audio
+    // 2. High-quality Gemini Neural Audio TTS (Aoede - Ceria & Ekspresif / Zephyr - Hangat)
     const geminiAudio = await tryGeminiNeuralTTS(
       text,
       body.speaker || profileId,
-      body.instruction,
     );
     if (geminiAudio) {
       return new Response(geminiAudio.buffer, {
@@ -427,12 +534,25 @@ export async function POST(request: Request) {
         headers: {
           "Content-Type": geminiAudio.contentType,
           "X-Voice-Provider": "gemini-neural-tts",
-          "Cache-Control": "no-store",
+          "Cache-Control": "public, max-age=86400",
         },
       });
     }
 
-    // 3. Last-resort fallback
+    // 3. Local Neural Edge-TTS (id-ID-GadisNeural: young cheerful Indonesian female voice)
+    const edgeAudio = await tryLocalEdgeNeuralTTS(text);
+    if (edgeAudio) {
+      return new Response(edgeAudio.buffer, {
+        status: 200,
+        headers: {
+          "Content-Type": edgeAudio.contentType,
+          "X-Voice-Provider": "edge-neural-gadis",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+    }
+
+    // 4. Catastrophic safety net fallback
     const fallbackAudio = await tryFallbackIndoTTS(text);
     if (fallbackAudio) {
       return new Response(fallbackAudio.buffer, {
@@ -440,6 +560,7 @@ export async function POST(request: Request) {
         headers: {
           "Content-Type": fallbackAudio.contentType,
           "X-Voice-Provider": "indo-fallback",
+          "Cache-Control": "public, max-age=86400",
         },
       });
     }

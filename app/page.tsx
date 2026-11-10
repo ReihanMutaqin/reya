@@ -61,8 +61,8 @@ type SpeechRecognitionLike = {
   start: () => void;
   stop: () => void;
   onresult:
-    | ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void)
-    | null;
+  | ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void)
+  | null;
   onend: (() => void) | null;
   onerror: (() => void) | null;
 };
@@ -1195,16 +1195,15 @@ function RobotCRTUnit({
   const statusLabel = listening
     ? "REC // MENDENGARKAN"
     : thinking
-    ? "PROC // GEMINI FLASH"
-    : speaking
-    ? "OUT // VOICEBOX AUDIO"
-    : "STBY // REYA SIAP";
+      ? "PROC // GEMINI FLASH"
+      : speaking
+        ? "OUT // VOICEBOX AUDIO"
+        : "STBY // REYA SIAP";
 
   return (
     <div
-      className={`crt-housing mood-${mood} ${speaking ? "is-speaking" : ""} ${
-        thinking ? "is-thinking" : ""
-      }`}
+      className={`crt-housing mood-${mood} ${speaking ? "is-speaking" : ""} ${thinking ? "is-thinking" : ""
+        }`}
     >
       <div className="crt-screen">
         <div className="crt-eyes">
@@ -1220,9 +1219,8 @@ function RobotCRTUnit({
         </div>
       </div>
       <div
-        className={`crt-state-bar ${listening ? "listening" : ""} ${
-          thinking ? "thinking" : ""
-        }`}
+        className={`crt-state-bar ${listening ? "listening" : ""} ${thinking ? "thinking" : ""
+          }`}
       >
         {statusLabel}
       </div>
@@ -1391,8 +1389,8 @@ export default function Home() {
               const list = Array.isArray(raw)
                 ? raw
                 : typeof raw === "object" && raw !== null && "profiles" in raw
-                ? ((raw as { profiles?: unknown[] }).profiles ?? [])
-                : [];
+                  ? ((raw as { profiles?: unknown[] }).profiles ?? [])
+                  : [];
               profiles = list
                 .filter((item): item is Record<string, unknown> =>
                   Boolean(item && typeof item === "object"),
@@ -2176,7 +2174,7 @@ export default function Home() {
       );
       utterance.lang = "id-ID";
       utterance.rate = 1.0;
-      utterance.pitch = 1.05;
+      utterance.pitch = 1.0;
       const voices = await getBrowserVoices();
       const isIndonesian = (voice: SpeechSynthesisVoice) =>
         voice.lang.toLowerCase().startsWith("id") ||
@@ -2914,8 +2912,8 @@ export default function Home() {
       return found
         ? `Voicebox · ${found.name}`
         : voiceboxOnline
-        ? `Voicebox · ${voiceboxProfileId}`
-        : "Voicebox · Auto Indo";
+          ? `Voicebox · ${voiceboxProfileId}`
+          : "Voicebox · Auto Indo";
     }
     if (voiceEngine === "supertonic") return `Supertonic · ${voiceProfile}`;
     if (voiceEngine === "qwen")
@@ -2948,9 +2946,8 @@ export default function Home() {
           <span className="telemetry-divider" aria-hidden="true" />
           <div className="telemetry-item">
             <span
-              className={`status-led ${
-                voiceboxOnline || health.natural_tts ? "online" : ""
-              }`}
+              className={`status-led ${voiceboxOnline || health.natural_tts ? "online" : ""
+                }`}
             />
             <span className="mono">
               VOICE:{" "}
@@ -3059,7 +3056,7 @@ export default function Home() {
                   className="hw-button"
                   onClick={() =>
                     void speak(
-                      "Halo! Aku REYA. Suaraku terhubung dengan Voicebox dan siap menemanimu ngobrol atau bermain musik!",
+                      "Halo! Aku REYA. Suaraku sekarang ceria dan natural, siap menemanimu ngobrol santai atau bermain musik!",
                     )
                   }
                 >
@@ -3077,10 +3074,10 @@ export default function Home() {
                 {speaking
                   ? "STATUS: MENGELUARKAN SUARA"
                   : thinking
-                  ? "STATUS: MEMPROSES JAWABAN"
-                  : listening
-                  ? "STATUS: MEREKAM MIKROFON"
-                  : "STATUS: SIAP MENERIMA PESAN"}
+                    ? "STATUS: MEMPROSES JAWABAN"
+                    : listening
+                      ? "STATUS: MEREKAM MIKROFON"
+                      : "STATUS: SIAP MENERIMA PESAN"}
               </span>
             </div>
 
@@ -3229,8 +3226,8 @@ export default function Home() {
                   {cameraLoading
                     ? "Menyiapkan model pelacak tangan..."
                     : cameraError
-                    ? "Kamera gagal diaktifkan"
-                    : "Sensor optik belum aktif"}
+                      ? "Kamera gagal diaktifkan"
+                      : "Sensor optik belum aktif"}
                 </strong>
                 <p>
                   {cameraError ||
@@ -3308,9 +3305,8 @@ export default function Home() {
             <div className="camera-controls">
               <button
                 type="button"
-                className={`hw-button ${
-                  musicPlaying ? "primary" : "active-green"
-                }`}
+                className={`hw-button ${musicPlaying ? "primary" : "active-green"
+                  }`}
                 onClick={() => {
                   if (musicPlaying) stopMusic();
                   else startMusic();
@@ -3881,9 +3877,11 @@ export default function Home() {
               </div>
             )}
 
-            {(voiceEngine === "supertonic" || voiceEngine === "qwen") && (
+            {(voiceEngine === "supertonic" ||
+              voiceEngine === "qwen" ||
+              !voiceboxOnline) && (
               <div className="field-group">
-                <label htmlFor="local-profile-select">KARAKTER SUARA LOKAL</label>
+                <label htmlFor="local-profile-select">KARAKTER SUARA NEURAL</label>
                 <select
                   id="local-profile-select"
                   className="field-input"
@@ -3895,17 +3893,7 @@ export default function Home() {
                     setVoiceProfile(event.target.value)
                   }
                 >
-                  {voiceEngine === "supertonic" ? (
-                    <>
-                      <option value="F2">
-                        F2 : REYA Cute (Ceria, muda, Bahasa Indonesia)
-                      </option>
-                      <option value="F5">F5 : REYA Calm (Lembut &amp; tenang)</option>
-                      <option value="F1">F1 : Kalem &amp; dewasa</option>
-                      <option value="F3">F3 : Jelas &amp; artikulatif</option>
-                      <option value="F4">F4 : Ekspresif</option>
-                    </>
-                  ) : (
+                  {voiceEngine === "qwen" ? (
                     <>
                       <option value="Serena">Serena : Hangat &amp; lembut</option>
                       <option value="Vivian">Vivian : Muda &amp; ceria</option>
@@ -3916,6 +3904,24 @@ export default function Home() {
                           {voiceProfile.replace("clone:", "")} (Custom Clone)
                         </option>
                       )}
+                    </>
+                  ) : (
+                    <>
+                      <option value="F2">
+                        F2 / Aoede : REYA Ceria (Ceria, ramah, ekspresif)
+                      </option>
+                      <option value="F1">
+                        F1 / Zephyr : REYA Natural (Hangat, santai, natural)
+                      </option>
+                      <option value="F3">
+                        F3 / Kore : REYA Artikulatif (Jelas &amp; jernih)
+                      </option>
+                      <option value="F5">
+                        F5 / Leda : REYA Kalem (Lembut &amp; tenang)
+                      </option>
+                      <option value="F4">
+                        F4 / Callirrhoe : REYA Dinamis
+                      </option>
                     </>
                   )}
                 </select>
@@ -3956,8 +3962,8 @@ export default function Home() {
                         {voiceRecording
                           ? "Berhenti"
                           : voiceBlob
-                          ? "Rekam Ulang"
-                          : "Rekam 6 Detik"}
+                            ? "Rekam Ulang"
+                            : "Rekam 6 Detik"}
                       </span>
                     </button>
                   </div>
@@ -3992,7 +3998,7 @@ export default function Home() {
                 onClick={() => {
                   setVoiceModal(false);
                   void speak(
-                    "Halo! Ini adalah uji suara REYA dari konsol Studio Suara.",
+                    "Halo! Ini adalah uji suara ceria REYA dari konsol Studio Suara.",
                   );
                 }}
               >
