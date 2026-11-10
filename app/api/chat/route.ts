@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { findSong, generateMelodyForSong } from "../../songs";
 
 const GEMINI_API_KEY = (
   process.env.GEMINI_API_KEY ||
@@ -54,19 +55,18 @@ export async function POST(request: Request) {
 
     const lastUserText = (messages[messages.length - 1]?.content || "").toLowerCase();
 
-    // Direct instant recognition for song requests
-    if (
-      lastUserText.includes("kartini") ||
-      (lastUserText.includes("mainkan") && lastUserText.includes("ibu"))
-    ) {
+    // 1. Check if user requested a known song from the rich catalog
+    const matchedCatalogSong = findSong(lastUserText);
+    if (matchedCatalogSong) {
       return NextResponse.json({
-        message:
-          "Tentu! Ini lagu Ibu Kita Kartini yang indah, aku mainkan pakai instrumen untukmu sekarang ya! ♪",
-        model: "reya-music-engine",
-        provider: "reya-native",
+        message: `Tentu! Ini lagu ${matchedCatalogSong.title} yang indah, aku mainkan pakai instrumen untukmu sekarang ya! ♪`,
+        song: matchedCatalogSong,
+        model: "reya-song-engine",
+        provider: "reya-catalog",
       });
     }
 
+    // 2. Check if user requested sample scale melody
     if (
       lastUserText.includes("melodi") ||
       lastUserText.includes("tangga nada")
@@ -77,6 +77,29 @@ export async function POST(request: Request) {
         model: "reya-music-engine",
         provider: "reya-native",
       });
+    }
+
+    // 3. Check if user requested any custom song search ("mainkan lagu X", "putar lagu X", dsb)
+    const isSongRequest =
+      lastUserText.includes("mainkan") ||
+      lastUserText.includes("putar") ||
+      lastUserText.includes("nyanyikan") ||
+      (lastUserText.includes("lagu") && !lastUserText.includes("apa itu lagu"));
+
+    if (isSongRequest) {
+      const cleanTitle = lastUserText
+        .replace(/(tolong|coba|dong|bisa|mainkan|putar|nyanyikan|lagu|musik|instrumental|instrumen)/gi, "")
+        .trim();
+
+      if (cleanTitle) {
+        const dynamicSong = generateMelodyForSong(cleanTitle);
+        return NextResponse.json({
+          message: `Asyik! Aku sudah carikan melodi lagu ${dynamicSong.title} untukmu, dengarkan aku memainkannya ya! ♪`,
+          song: dynamicSong,
+          model: "reya-song-ai",
+          provider: "reya-transcriber",
+        });
+      }
     }
 
     const historyText = messages

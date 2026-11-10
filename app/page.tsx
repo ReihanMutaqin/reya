@@ -9,6 +9,12 @@ import {
   useState,
 } from "react";
 import { FilesetResolver, GestureRecognizer } from "@mediapipe/tasks-vision";
+import {
+  Song,
+  SONG_CATALOG,
+  findSong,
+  generateMelodyForSong,
+} from "./songs";
 
 const API_BASE = "http://127.0.0.1:8765";
 const DEFAULT_VOICEBOX_URL =
@@ -1457,8 +1463,10 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [activeScaleNoteId, setActiveScaleNoteId] = useState<string | null>(null);
   const [playingMelody, setPlayingMelody] = useState(false);
-  const [playingKartini, setPlayingKartini] = useState(false);
-  const kartiniTimersRef = useRef<number[]>([]);
+  const [playingSong, setPlayingSong] = useState(false);
+  const [activeSong, setActiveSong] = useState<Song | null>(null);
+  const [songSearchInput, setSongSearchInput] = useState("");
+  const songTimersRef = useRef<number[]>([]);
   const [showMatrixView, setShowMatrixView] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -1684,14 +1692,15 @@ export default function Home() {
     }
   }, [ensureMusicAudio, recordActivity]);
 
-  const stopKartiniSong = useCallback(() => {
-    kartiniTimersRef.current.forEach((t) => window.clearTimeout(t));
-    kartiniTimersRef.current = [];
-    setPlayingKartini(false);
+  const stopSong = useCallback(() => {
+    songTimersRef.current.forEach((t) => window.clearTimeout(t));
+    songTimersRef.current = [];
+    setPlayingSong(false);
+    setActiveSong(null);
   }, []);
 
   const stopMusic = useCallback(() => {
-    stopKartiniSong();
+    stopSong();
     if (noteReleaseTimerRef.current)
       window.clearTimeout(noteReleaseTimerRef.current);
     noteReleaseTimerRef.current = null;
@@ -1715,7 +1724,7 @@ export default function Home() {
     setLastPlayedLabel(
       "Sensor musik berhenti: buka telapak tangan atau sentuh tangga nada untuk mulai",
     );
-  }, [stopKartiniSong]);
+  }, [stopSong]);
 
   const startMusic = useCallback(() => {
     if (!ensureMusicAudio()) return;
@@ -1837,86 +1846,68 @@ export default function Home() {
     });
   }, [ensureMusicAudio, playingMelody, showToast]);
 
+  const playSong = useCallback(
+    (song: Song) => {
+      const audio = ensureMusicAudio();
+      if (!audio) return;
+      recordActivity();
+
+      if (!musicPlayingRef.current) {
+        musicPlayingRef.current = true;
+        setMusicPlaying(true);
+      }
+
+      // Stop previous song timers
+      songTimersRef.current.forEach((t) => window.clearTimeout(t));
+      songTimersRef.current = [];
+
+      setActiveSong(song);
+      setPlayingSong(true);
+      showToast(`Memainkan lagu: ${song.title} ♪`);
+
+      song.notes.forEach((item, index) => {
+        const timer = window.setTimeout(() => {
+          const note = SCALE_NOTES.find((n) => n.id === item.id);
+          if (note && musicPlayingRef.current) {
+            playNote(
+              audio.context,
+              audio.master,
+              note.freq,
+              musicModeRef.current,
+              0.55,
+              0,
+              false,
+            );
+            setActiveScaleNoteId(note.id);
+            setLastPlayedLabel(
+              `${song.title}: "${item.lyric}" (${note.name} / ${note.notation})`,
+            );
+          }
+          if (index === song.notes.length - 1) {
+            const endTimer = window.setTimeout(() => {
+              setPlayingSong(false);
+              setActiveSong(null);
+              setActiveScaleNoteId(null);
+              setLastPlayedLabel(`Lagu ${song.title} selesai dimainkan`);
+            }, 1200);
+            songTimersRef.current.push(endTimer);
+          }
+        }, item.delay);
+        songTimersRef.current.push(timer);
+      });
+    },
+    [ensureMusicAudio, recordActivity, showToast],
+  );
+
   const playKartiniSong = useCallback(() => {
-    if (playingKartini) {
-      stopKartiniSong();
+    if (playingSong && activeSong?.id === "kartini") {
+      stopSong();
       showToast("Lagu Ibu Kita Kartini dihentikan.");
       return;
     }
-
-    const audio = ensureMusicAudio();
-    if (!audio) return;
-    recordActivity();
-
-    if (!musicPlayingRef.current) {
-      musicPlayingRef.current = true;
-      setMusicPlaying(true);
-    }
-
-    stopKartiniSong();
-    setPlayingKartini(true);
-    showToast("Memainkan lagu: Ibu Kita Kartini ♪");
-
-    const kartiniNotes: Array<{ id: string; lyric: string; delay: number }> = [
-      // Bar 1-2: "I - bu ki - ta Kar - ti - ni"
-      { id: "do", lyric: "I-", delay: 0 },
-      { id: "re", lyric: "bu", delay: 440 },
-      { id: "mi", lyric: "ki-", delay: 880 },
-      { id: "fa", lyric: "ta", delay: 1320 },
-      { id: "sol", lyric: "Kar-", delay: 1760 },
-      { id: "mi", lyric: "ti-", delay: 2450 },
-      { id: "do", lyric: "ni", delay: 2900 },
-      // Bar 3-4: "Pu - tri se - ja - ti"
-      { id: "fa", lyric: "Pu-", delay: 3800 },
-      { id: "la", lyric: "tri", delay: 4240 },
-      { id: "sol", lyric: "se-", delay: 4680 },
-      { id: "fa", lyric: "ja-", delay: 5120 },
-      { id: "mi", lyric: "ti", delay: 5560 },
-      // Bar 5-6: "Pu - tri In - do - ne - sia"
-      { id: "re", lyric: "Pu-", delay: 6500 },
-      { id: "fa", lyric: "tri", delay: 6940 },
-      { id: "mi", lyric: "In-", delay: 7380 },
-      { id: "re", lyric: "do-", delay: 7820 },
-      { id: "do", lyric: "ne-", delay: 8260 },
-      { id: "mi", lyric: "si-", delay: 8700 },
-      { id: "sol", lyric: "a", delay: 9140 },
-      // Bar 7-8: "Ha - rum na - ma - nya"
-      { id: "fa", lyric: "Ha-", delay: 10050 },
-      { id: "mi", lyric: "rum", delay: 10490 },
-      { id: "re", lyric: "na-", delay: 10930 },
-      { id: "do", lyric: "nya", delay: 11450 },
-    ];
-
-    kartiniNotes.forEach((item, index) => {
-      const timer = window.setTimeout(() => {
-        const note = SCALE_NOTES.find((n) => n.id === item.id);
-        if (note && musicPlayingRef.current) {
-          playNote(
-            audio.context,
-            audio.master,
-            note.freq,
-            musicModeRef.current,
-            0.55,
-            0,
-            false,
-          );
-          setActiveScaleNoteId(note.id);
-          setLastPlayedLabel(
-            `Ibu Kita Kartini: "${item.lyric}" (${note.name} / ${note.notation})`,
-          );
-        }
-        if (index === kartiniNotes.length - 1) {
-          const endTimer = window.setTimeout(() => {
-            setPlayingKartini(false);
-            setActiveScaleNoteId(null);
-            setLastPlayedLabel("Lagu Ibu Kita Kartini selesai dimainkan");
-          }, 1200);
-          kartiniTimersRef.current.push(endTimer);
-        }
-      }, item.delay);
-      kartiniTimersRef.current.push(timer);
-    });
-  }, [ensureMusicAudio, playingKartini, recordActivity, showToast, stopKartiniSong]);
+    const kartini = findSong("kartini") ?? SONG_CATALOG[0];
+    playSong(kartini);
+  }, [activeSong, playSong, playingSong, showToast, stopSong]);
 
   const triggerMatrixCoordinate = useCallback(
     (normX: number, normY: number) => {
@@ -2594,14 +2585,11 @@ export default function Home() {
       const fullPrompt = `${systemPrompt}\n\nPercakapan:\n${historyText}\nREYA:`;
 
       const norm = text.toLowerCase();
-      const isKartini =
-        norm.includes("kartini") ||
-        (norm.includes("mainkan") && norm.includes("ibu")) ||
-        (norm.includes("lagu") && (norm.includes("kartini") || norm.includes("ibu")));
 
-      if (isKartini) {
-        answer =
-          "Tentu! Ini lagu Ibu Kita Kartini yang indah, aku mainkan pakai instrumen untukmu sekarang ya! ♪";
+      // 1. Check if user asked for a known song in the rich catalog
+      const matchedCatalogSong = findSong(norm);
+      if (matchedCatalogSong) {
+        answer = `Tentu! Ini lagu ${matchedCatalogSong.title} yang indah, aku mainkan pakai instrumen untukmu sekarang ya! ♪`;
         const assistantMessage: Message = { role: "assistant", content: answer };
         setMessages((current) => [...current, assistantMessage]);
         setThinking(false);
@@ -2609,7 +2597,7 @@ export default function Home() {
         const triggerSong = () => {
           if (!started) {
             started = true;
-            playKartiniSong();
+            playSong(matchedCatalogSong);
           }
         };
         void speak(answer, triggerSong);
@@ -2651,11 +2639,27 @@ export default function Home() {
           const data = (await response.json()) as {
             message?: string;
             model?: string;
+            song?: Song;
           };
           const candidate = cleanResponse(data.message ?? "");
           if (candidate) {
             answer = candidate;
             if (data.model) setActiveBrainLabel(data.model);
+            if (data.song) {
+              const assistantMessage: Message = { role: "assistant", content: answer };
+              setMessages((current) => [...current, assistantMessage]);
+              setThinking(false);
+              let started = false;
+              const triggerSong = () => {
+                if (!started) {
+                  started = true;
+                  playSong(data.song!);
+                }
+              };
+              void speak(answer, triggerSong);
+              window.setTimeout(triggerSong, 3800);
+              return;
+            }
           }
         }
       } catch {
@@ -2741,6 +2745,28 @@ export default function Home() {
 
       // 4. Instant local fallback
       if (!answer) {
+        const isSongQuery =
+          norm.includes("mainkan") ||
+          norm.includes("putar") ||
+          norm.includes("lagu") ||
+          norm.includes("nyanyikan");
+        if (isSongQuery) {
+          const dynamicSong = generateMelodyForSong(text);
+          answer = `Asyik! Aku carikan melodi lagu ${dynamicSong.title} untukmu, aku mainkan sekarang ya! ♪`;
+          const assistantMessage: Message = { role: "assistant", content: answer };
+          setMessages((current) => [...current, assistantMessage]);
+          setThinking(false);
+          let started = false;
+          const trigger = () => {
+            if (!started) {
+              started = true;
+              playSong(dynamicSong);
+            }
+          };
+          void speak(answer, trigger);
+          window.setTimeout(trigger, 3800);
+          return;
+        }
         answer = fallbackAnswer(text);
       }
 
@@ -2753,7 +2779,7 @@ export default function Home() {
       input,
       messages,
       playExampleMelody,
-      playKartiniSong,
+      playSong,
       recordActivity,
       speak,
       thinking,
@@ -3459,9 +3485,10 @@ export default function Home() {
 
             <div className="prompt-strip">
               {[
+                "Mainkan lagu Balonku Ada Lima",
                 "Mainkan lagu Ibu Kita Kartini",
+                "Cari lagu Laskar Pelangi",
                 "Bagaimana cara main musik pakai tangan?",
-                "Jelaskan cara kerja AI secara singkat",
               ].map((suggestion) => (
                 <button
                   key={suggestion}
@@ -3926,15 +3953,102 @@ export default function Home() {
 
                     <button
                       type="button"
-                      className={`hw-button ${playingKartini ? "primary active-green" : ""}`}
+                      className={`hw-button ${playingSong ? "primary active-green" : ""}`}
                       style={{ width: "100%", minHeight: "44px" }}
-                      onClick={playKartiniSong}
+                      onClick={() => {
+                        if (playingSong) stopSong();
+                        else playKartiniSong();
+                      }}
                     >
                       <IconSpeaker />
                       <span>
-                        {playingKartini ? "Hentikan Lagu" : "Putar Ibu Kita Kartini"}
+                        {playingSong
+                          ? `Hentikan (${activeSong?.title ?? "Lagu"})`
+                          : "Putar Ibu Kita Kartini"}
                       </span>
                     </button>
+                  </div>
+
+                  {/* Pencarian Lagu AI Otomatis */}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (songSearchInput.trim()) {
+                        void askRobot(`Mainkan lagu ${songSearchInput.trim()}`);
+                        setSongSearchInput("");
+                      }
+                    }}
+                    style={{ marginTop: "12px", display: "flex", gap: "6px" }}
+                  >
+                    <input
+                      type="text"
+                      className="field-input"
+                      value={songSearchInput}
+                      onChange={(e) => setSongSearchInput(e.target.value)}
+                      placeholder="Minta lagu apa saja (Balonku, Pelangi, Laskar Pelangi, dsb)..."
+                      style={{ flex: 1, minHeight: "38px", fontSize: "12px" }}
+                    />
+                    <button
+                      type="submit"
+                      className="hw-button primary"
+                      style={{ minHeight: "38px", padding: "0 14px", whiteSpace: "nowrap" }}
+                    >
+                      <span>Cari &amp; Mainkan</span>
+                    </button>
+                  </form>
+
+                  {/* Pilihan Koleksi Lagu Cepat */}
+                  <div style={{ marginTop: "10px" }}>
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        color: "var(--ink-muted)",
+                        marginBottom: "6px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <span>Koleksi Lagu Siap Main:</span>
+                      <span className="mono" style={{ fontSize: "10px" }}>
+                        {SONG_CATALOG.length} LAGU
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fill, minmax(135px, 1fr))",
+                        gap: "6px",
+                      }}
+                    >
+                      {SONG_CATALOG.map((s) => {
+                        const isCurrent = playingSong && activeSong?.id === s.id;
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            className={`hw-button ${isCurrent ? "primary active-green" : ""}`}
+                            style={{
+                              padding: "6px 8px",
+                              fontSize: "11px",
+                              minHeight: "34px",
+                              justifyContent: "flex-start",
+                              textAlign: "left",
+                            }}
+                            onClick={() => {
+                              if (isCurrent) stopSong();
+                              else playSong(s);
+                            }}
+                            title={`Putar ${s.title}`}
+                          >
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {isCurrent ? "■ " : "▶ "} {s.title}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>
