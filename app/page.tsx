@@ -5191,15 +5191,15 @@ export default function Home() {
                     </button>
                   </div>
 
-                  {/* STUDIO NYANYI & KARAOKE ENCHOR.US (LIVE API) */}
+                  {/* STUDIO NYANYI & KARAOKE BITCHORD (SPOTIFY-GRADE SEARCH & TTML LYRICS) */}
                   <div className="enchor-stage-box">
                     <div className="enchor-stage-header">
                       <div className="enchor-stage-title">
                         <span className="enchor-mic-badge">🎤</span>
                         <div>
-                          <strong>Panggung Nyanyi &amp; Karaoke Enchor.us</strong>
+                          <strong>Panggung Musik &amp; Karaoke BitChord</strong>
                           <small className="mono" style={{ display: "block", fontSize: "10px", color: "var(--ink-muted)" }}>
-                            API: api.enchor.us · Vokal Synth Lucu + Lirik &amp; Audio Asli
+                            Pencarian Rapi ala Spotify · Lirik Suku Kata TTML BitChord
                           </small>
                         </div>
                       </div>
@@ -5229,7 +5229,7 @@ export default function Home() {
                         className="field-input"
                         value={enchorQuery}
                         onChange={(e) => setEnchorQuery(e.target.value)}
-                        placeholder="Cari lagu di Enchor.us (Queen, Billie Eilish, Creep, Dragonforce)..."
+                        placeholder="Cari judul lagu atau nama penyanyi ala Spotify..."
                         style={{ flex: 1, minHeight: "38px", fontSize: "12px" }}
                       />
                       <button
@@ -5246,11 +5246,11 @@ export default function Home() {
 
                     <div className="enchor-quick-chips">
                       {[
-                        "Bohemian Rhapsody",
+                        "Hotel California",
                         "Wildflower",
-                        "Creep",
-                        "Dragonforce",
-                        "Hatsune Miku",
+                        "Komang",
+                        "Bohemian Rhapsody",
+                        "Fix You",
                       ].map((preset) => (
                         <button
                           key={preset}
