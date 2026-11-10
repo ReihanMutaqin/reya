@@ -30,6 +30,8 @@ export interface EnchorSongSummary {
   hasLyrics: boolean;
   hasVocals: boolean;
   instruments: string[];
+  directAudioUrl?: string | null;
+  source?: "enchor" | "global";
 }
 
 interface SngFileEntry {
@@ -567,64 +569,172 @@ export async function GET(request: Request) {
     });
   }
 
-  // 2. Search Enchor.us API & Extract Singing Melody + Synced Lyrics
+  // 2. Search Enchor.us API + Global Track/Lyric Fallback & Extract Singing Melody + Synced Lyrics
   const query = (searchParams.get("q") || "bohemian rhapsody").trim();
   const targetMd5 = searchParams.get("md5") || "";
 
-  try {
-    const searchRes = await fetch("https://api.enchor.us/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ search: query, page: 1 }),
-      signal: AbortSignal.timeout(5000),
-    });
+  const scoreMatch = (q: string, name: string, artist: string): number => {
+    const qNorm = q.toLowerCase().trim();
+    const nNorm = name.toLowerCase().trim();
+    const aNorm = artist.toLowerCase().trim();
+    const words = qNorm.split(/\s+/).filter((w) => w.length >= 2);
 
-    if (!searchRes.ok) {
-      return Response.json(
-        { error: "Enchor API tidak merespons" },
-        { status: 502 },
-      );
+    let score = 0;
+    if (nNorm === qNorm) score += 160;
+    else if (nNorm.startsWith(qNorm) || qNorm.startsWith(nNorm)) score += 100;
+    else if (nNorm.includes(qNorm)) score += 75;
+
+    let matchedWords = 0;
+    for (const w of words) {
+      if (nNorm.includes(w)) {
+        score += 40;
+        matchedWords++;
+      }
+      if (aNorm.includes(w)) {
+        score += 32;
+        matchedWords++;
+      }
     }
 
-    const payload = (await searchRes.json()) as {
-      found?: number;
-      data?: Array<Record<string, unknown>>;
-    };
+    // Penalize covers or album-only matches where neither song title nor artist matched
+    if (matchedWords === 0) score -= 120;
+    if (/cover|medley|challenge|strumming/i.test(nNorm) && !/cover/i.test(qNorm)) {
+      score -= 25;
+    }
+    return score;
+  };
 
-    const rawItems = Array.isArray(payload.data) ? payload.data : [];
-    const summaries: EnchorSongSummary[] = rawItems.slice(0, 12).map((item) => {
-      const notesData = (item.notesData as Record<string, unknown>) || {};
-      const albumArtMd5 =
-        typeof item.albumArtMd5 === "string" && item.albumArtMd5
-          ? item.albumArtMd5
-          : null;
-      return {
-        chartId: Number(item.chartId ?? 0),
-        name: String(item.name ?? "Lagu Enchor"),
-        artist: String(item.artist ?? "Unknown Artist"),
-        album: String(item.album ?? ""),
-        genre: String(item.genre ?? ""),
-        year: String(item.year ?? ""),
-        charter: String(item.charter ?? ""),
-        md5: String(item.md5 ?? ""),
-        albumArtUrl: albumArtMd5
-          ? `https://files.enchor.us/${albumArtMd5}.jpg`
-          : null,
-        songLengthMs: Number(item.song_length ?? 180000),
-        previewStartMs: Number(item.preview_start_time ?? 0),
-        hasLyrics: Boolean(notesData.hasLyrics),
-        hasVocals: Boolean(notesData.hasVocals),
-        instruments: Array.isArray(notesData.instruments)
-          ? (notesData.instruments as string[])
-          : [],
+  const parseLrcToLines = (lrcText: string): EnchorLyricLine[] => {
+    const lines: EnchorLyricLine[] = [];
+    const regex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/g;
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(lrcText)) !== null) {
+      const mins = Number(m[1]);
+      const secs = Number(m[2]);
+      const frac = m[3] ? Number(m[3].padEnd(3, "0")) : 0;
+      const text = m[4].trim();
+      if (text) {
+        lines.push({
+          timeMs: mins * 60000 + secs * 1000 + frac,
+          text,
+        });
+      }
+    }
+    return lines;
+  };
+
+  try {
+    const [enchorRes, itunesRes, lrcRes] = await Promise.allSettled([
+      fetch("https://api.enchor.us/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ search: query, page: 1 }),
+        signal: AbortSignal.timeout(4500),
+      }),
+      fetch(
+        `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=6`,
+        { signal: AbortSignal.timeout(3800) },
+      ),
+      fetch(
+        `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`,
+        { signal: AbortSignal.timeout(3800) },
+      ),
+    ]);
+
+    const summaries: EnchorSongSummary[] = [];
+
+    if (enchorRes.status === "fulfilled" && enchorRes.value.ok) {
+      const payload = (await enchorRes.value.json()) as {
+        data?: Array<Record<string, unknown>>;
       };
-    });
+      const rawItems = Array.isArray(payload.data) ? payload.data : [];
+      for (const item of rawItems.slice(0, 12)) {
+        const notesData = (item.notesData as Record<string, unknown>) || {};
+        const albumArtMd5 =
+          typeof item.albumArtMd5 === "string" && item.albumArtMd5
+            ? item.albumArtMd5
+            : null;
+        summaries.push({
+          chartId: Number(item.chartId ?? 0),
+          name: String(item.name ?? "Lagu Enchor"),
+          artist: String(item.artist ?? "Unknown Artist"),
+          album: String(item.album ?? ""),
+          genre: String(item.genre ?? ""),
+          year: String(item.year ?? ""),
+          charter: String(item.charter ?? "Enchor"),
+          md5: String(item.md5 ?? ""),
+          albumArtUrl: albumArtMd5
+            ? `https://files.enchor.us/${albumArtMd5}.jpg`
+            : null,
+          songLengthMs: Number(item.song_length ?? 180000),
+          previewStartMs: Number(item.preview_start_time ?? 0),
+          hasLyrics: Boolean(notesData.hasLyrics),
+          hasVocals: Boolean(notesData.hasVocals),
+          instruments: Array.isArray(notesData.instruments)
+            ? (notesData.instruments as string[])
+            : [],
+          source: "enchor",
+        });
+      }
+    }
 
-    // Sort so charts with lyrics/vocals come first when picking default
+    if (itunesRes.status === "fulfilled" && itunesRes.value.ok) {
+      const itunesData = (await itunesRes.value.json()) as {
+        results?: Array<Record<string, unknown>>;
+      };
+      for (const tr of (itunesData.results ?? []).slice(0, 5)) {
+        const trackId = Number(tr.trackId ?? 0);
+        const trackName = String(tr.trackName ?? "");
+        const artistName = String(tr.artistName ?? "");
+        const previewUrl =
+          typeof tr.previewUrl === "string" ? tr.previewUrl : null;
+        if (!trackName || !previewUrl) continue;
+
+        // Avoid duplicate if Enchor already has the exact same song+artist
+        const alreadyInEnchor = summaries.some(
+          (s) =>
+            s.name.toLowerCase() === trackName.toLowerCase() &&
+            s.artist.toLowerCase() === artistName.toLowerCase(),
+        );
+        if (alreadyInEnchor) continue;
+
+        const artUrl =
+          typeof tr.artworkUrl100 === "string"
+            ? tr.artworkUrl100.replace("100x100bb", "300x300bb")
+            : null;
+
+        summaries.push({
+          chartId: trackId,
+          name: trackName,
+          artist: artistName,
+          album: String(tr.collectionName ?? ""),
+          genre: String(tr.primaryGenreName ?? "Pop"),
+          year: String(tr.releaseDate ?? "").slice(0, 4),
+          charter: "Enchor + Official Audio",
+          md5: `itunes-${trackId}`,
+          albumArtUrl: artUrl,
+          songLengthMs: Number(tr.trackTimeMillis ?? 180000),
+          previewStartMs: 0,
+          hasLyrics: true,
+          hasVocals: true,
+          instruments: ["vocals", "keys"],
+          directAudioUrl: previewUrl,
+          source: "global",
+        });
+      }
+    }
+
+    // Sort by title/artist match relevance first, then lyrics/vocals availability
     const sorted = [...summaries].sort((a, b) => {
-      const scoreA = (a.hasLyrics ? 2 : 0) + (a.hasVocals ? 2 : 0);
-      const scoreB = (b.hasLyrics ? 2 : 0) + (b.hasVocals ? 2 : 0);
-      return scoreB - scoreA;
+      const relA =
+        scoreMatch(query, a.name, a.artist) +
+        (a.hasLyrics ? 12 : 0) +
+        (a.hasVocals ? 10 : 0);
+      const relB =
+        scoreMatch(query, b.name, b.artist) +
+        (b.hasLyrics ? 12 : 0) +
+        (b.hasVocals ? 10 : 0);
+      return relB - relA;
     });
 
     const chosen =
@@ -642,84 +752,167 @@ export async function GET(request: Request) {
 
     let lyrics: EnchorLyricLine[] = [];
     let notes: EnchorNoteItem[] = [];
-    let audioUrl: string | null = null;
-    let vocalAudioUrl: string | null = null;
+    let audioUrl: string | null = chosen.directAudioUrl ?? null;
+    let vocalAudioUrl: string | null = chosen.directAudioUrl ?? null;
 
-    const sngIndex = await fetchSngIndex(chosen.md5);
-    if (sngIndex) {
-      const hasSongAudio =
-        sngIndex.files.find((f) => /^song\.(opus|ogg|mp3)$/i.test(f.name)) ??
-        sngIndex.files.find((f) => /^vocals\.(opus|ogg|mp3)$/i.test(f.name)) ??
-        sngIndex.files.find((f) => /^(guitar|keys|rhythm)\.(opus|ogg|mp3)$/i.test(f.name));
-      const hasVocalAudio = sngIndex.files.find((f) =>
-        /^vocals\.(opus|ogg|mp3)$/i.test(f.name),
-      );
-
-      if (hasSongAudio) {
-        audioUrl = `/api/enchor?action=audio&md5=${chosen.md5}&file=${encodeURIComponent(hasSongAudio.name)}`;
-      }
-      if (hasVocalAudio) {
-        vocalAudioUrl = `/api/enchor?action=audio&md5=${chosen.md5}&file=${encodeURIComponent(hasVocalAudio.name)}`;
-      }
-
-      const chartEntry = sngIndex.files.find((f) =>
-        /notes\.chart$/i.test(f.name),
-      );
-      const midEntry = sngIndex.files.find((f) => /notes\.mid$/i.test(f.name));
-
-      if (chartEntry) {
-        const buf = await fetchUnmaskedSngEntry(
-          chosen.md5,
-          chartEntry,
-          sngIndex.xorMask,
-          300_000,
+    if (chosen.source === "enchor" && /^[a-f0-9]{32}$/i.test(chosen.md5)) {
+      const sngIndex = await fetchSngIndex(chosen.md5);
+      if (sngIndex) {
+        const hasSongAudio =
+          sngIndex.files.find((f) => /^song\.(opus|ogg|mp3)$/i.test(f.name)) ??
+          sngIndex.files.find((f) => /^vocals\.(opus|ogg|mp3)$/i.test(f.name)) ??
+          sngIndex.files.find((f) =>
+            /^(guitar|keys|rhythm)\.(opus|ogg|mp3)$/i.test(f.name),
+          );
+        const hasVocalAudio = sngIndex.files.find((f) =>
+          /^vocals\.(opus|ogg|mp3)$/i.test(f.name),
         );
-        if (buf) {
-          const parsed = parseNotesChart(buf.toString("utf8"));
-          lyrics = parsed.lyrics;
-          notes = parsed.notes;
+
+        if (hasSongAudio) {
+          audioUrl = `/api/enchor?action=audio&md5=${chosen.md5}&file=${encodeURIComponent(hasSongAudio.name)}`;
+        }
+        if (hasVocalAudio) {
+          vocalAudioUrl = `/api/enchor?action=audio&md5=${chosen.md5}&file=${encodeURIComponent(hasVocalAudio.name)}`;
+        }
+
+        const chartEntry = sngIndex.files.find((f) =>
+          /notes\.chart$/i.test(f.name),
+        );
+        const midEntry = sngIndex.files.find((f) =>
+          /notes\.mid$/i.test(f.name),
+        );
+
+        if (chartEntry) {
+          const buf = await fetchUnmaskedSngEntry(
+            chosen.md5,
+            chartEntry,
+            sngIndex.xorMask,
+            300_000,
+          );
+          if (buf) {
+            const parsed = parseNotesChart(buf.toString("utf8"));
+            lyrics = parsed.lyrics;
+            notes = parsed.notes;
+          }
+        }
+
+        if ((lyrics.length === 0 || notes.length === 0) && midEntry) {
+          const buf = await fetchUnmaskedSngEntry(
+            chosen.md5,
+            midEntry,
+            sngIndex.xorMask,
+            300_000,
+          );
+          if (buf) {
+            const parsed = parseMidiVocalsAndNotes(buf);
+            if (lyrics.length === 0) lyrics = parsed.lyrics;
+            if (notes.length === 0) notes = parsed.notes;
+          }
         }
       }
+    }
 
-      if ((lyrics.length === 0 || notes.length === 0) && midEntry) {
-        const buf = await fetchUnmaskedSngEntry(
-          chosen.md5,
-          midEntry,
-          sngIndex.xorMask,
-          300_000,
+    // Enrich synced lyrics from LRCLIB matching both song title and artist
+    if (lyrics.length === 0) {
+      let lrcCandidates: Array<Record<string, unknown>> = [];
+      try {
+        const specificLrcRes = await fetch(
+          `https://lrclib.net/api/search?q=${encodeURIComponent(`${chosen.name} ${chosen.artist}`)}`,
+          { signal: AbortSignal.timeout(3200) },
         );
-        if (buf) {
-          const parsed = parseMidiVocalsAndNotes(buf);
-          if (lyrics.length === 0) lyrics = parsed.lyrics;
-          if (notes.length === 0) notes = parsed.notes;
+        if (specificLrcRes.ok) {
+          const list = (await specificLrcRes.json()) as Array<
+            Record<string, unknown>
+          >;
+          if (Array.isArray(list)) lrcCandidates = list;
+        }
+      } catch {
+        // Fallback to initial lrcRes
+      }
+
+      if (
+        lrcCandidates.length === 0 &&
+        lrcRes.status === "fulfilled" &&
+        lrcRes.value.ok
+      ) {
+        const list = (await lrcRes.value.json()) as Array<
+          Record<string, unknown>
+        >;
+        if (Array.isArray(list)) lrcCandidates = list;
+      }
+
+      if (lrcCandidates.length > 0) {
+        const cName = chosen.name.toLowerCase();
+        const cArtist = chosen.artist.toLowerCase();
+        const bestLrc =
+          lrcCandidates.find(
+            (item) =>
+              typeof item.syncedLyrics === "string" &&
+              String(item.trackName ?? "").toLowerCase().includes(cName) &&
+              String(item.artistName ?? "").toLowerCase().includes(cArtist),
+          ) ??
+          lrcCandidates.find(
+            (item) =>
+              typeof item.syncedLyrics === "string" &&
+              String(item.artistName ?? "").toLowerCase().includes(cArtist),
+          ) ??
+          lrcCandidates.find(
+            (item) =>
+              typeof item.syncedLyrics === "string" &&
+              String(item.trackName ?? "").toLowerCase().includes(cName),
+          ) ??
+          lrcCandidates.find((item) => typeof item.syncedLyrics === "string") ??
+          lrcCandidates[0];
+
+        if (typeof bestLrc?.syncedLyrics === "string") {
+          const parsedLrc = parseLrcToLines(bestLrc.syncedLyrics);
+          const firstMs = parsedLrc[0]?.timeMs ?? 0;
+          lyrics = parsedLrc.slice(0, 24).map((line) => ({
+            timeMs: Math.max(0, line.timeMs - firstMs),
+            text: line.text,
+          }));
+        } else if (typeof bestLrc?.plainLyrics === "string") {
+          lyrics = bestLrc.plainLyrics
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .slice(0, 18)
+            .map((text, idx) => ({ timeMs: idx * 2600, text }));
         }
       }
     }
 
     if (notes.length === 0) {
       const fallbackFreqs: Array<{ id: ScaleNoteId; freq: number }> = [
-        { id: "do", freq: 261.63 },
-        { id: "re", freq: 293.66 },
         { id: "mi", freq: 329.63 },
         { id: "sol", freq: 392.0 },
         { id: "la", freq: 440.0 },
+        { id: "sol", freq: 392.0 },
+        { id: "mi", freq: 329.63 },
+        { id: "re", freq: 293.66 },
+        { id: "do", freq: 261.63 },
+        { id: "re", freq: 293.66 },
+        { id: "mi", freq: 329.63 },
+        { id: "fa", freq: 349.23 },
+        { id: "sol", freq: 392.0 },
         { id: "do_high", freq: 523.25 },
-        { id: "la", freq: 440.0 },
-        { id: "sol", freq: 392.0 },
-        { id: "mi", freq: 329.63 },
-        { id: "re", freq: 293.66 },
-        { id: "do", freq: 261.63 },
       ];
+      const lyricWords = lyrics
+        .flatMap((l) => l.text.split(/\s+/))
+        .filter(Boolean);
       const syllables = ["La~", "Na~", "Mi~", "Lu~", "La~", "Du~"];
-      notes = Array.from({ length: 24 }, (_, idx) => {
+      notes = Array.from({ length: 32 }, (_, idx) => {
         const pick =
-          fallbackFreqs[(idx + chosen.name.charCodeAt(idx % chosen.name.length)) % fallbackFreqs.length];
+          fallbackFreqs[
+            (idx + chosen.name.charCodeAt(idx % chosen.name.length)) %
+              fallbackFreqs.length
+          ];
         return {
           id: pick.id,
           freq: pick.freq,
-          dur: idx % 4 === 3 ? 0.55 : 0.34,
-          gap: idx % 4 === 3 ? 460 : 280,
-          lyric: syllables[idx % syllables.length],
+          dur: idx % 4 === 3 ? 0.52 : 0.34,
+          gap: idx % 4 === 3 ? 440 : 300,
+          lyric: lyricWords[idx] || syllables[idx % syllables.length],
         };
       });
     }
@@ -734,8 +927,8 @@ export async function GET(request: Request) {
     }
 
     return Response.json({
-      found: payload.found ?? summaries.length,
-      results: sorted,
+      found: sorted.length,
+      results: sorted.slice(0, 10),
       selected: {
         ...chosen,
         audioUrl: audioUrl ?? vocalAudioUrl,

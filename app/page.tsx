@@ -2725,6 +2725,7 @@ export default function Home() {
       song: Song,
       options?: {
         sing?: boolean;
+        muteSynth?: boolean;
         lyrics?: Array<{ timeMs: number; text: string }>;
       },
     ) => {
@@ -2742,6 +2743,7 @@ export default function Home() {
       songTimersRef.current = [];
 
       const shouldSing = Boolean(options?.sing);
+      const muteSynth = Boolean(options?.muteSynth);
       setSingingMode(shouldSing);
       setActiveSong(song);
       setPlayingSong(true);
@@ -2769,24 +2771,26 @@ export default function Home() {
           const pitchFreq = item.freq ?? note.freq;
 
           if (musicPlayingRef.current) {
-            playNote(
-              audio.context,
-              audio.master,
-              pitchFreq,
-              musicModeRef.current,
-              0.55,
-              shouldSing ? -0.15 : 0,
-              false,
-            );
-            if (shouldSing) {
-              playKawaiiVocalNote(
+            if (!muteSynth) {
+              playNote(
                 audio.context,
                 audio.master,
                 pitchFreq,
-                item.dur ?? 0.38,
-                index,
-                0.15,
+                musicModeRef.current,
+                0.55,
+                shouldSing ? -0.15 : 0,
+                false,
               );
+              if (shouldSing) {
+                playKawaiiVocalNote(
+                  audio.context,
+                  audio.master,
+                  pitchFreq,
+                  item.dur ?? 0.38,
+                  index,
+                  0.15,
+                );
+              }
             }
             setActiveScaleNoteId(note.id);
             if (!options?.lyrics?.length && item.lyric) {
@@ -2798,12 +2802,14 @@ export default function Home() {
           }
           if (index === song.notes.length - 1) {
             const endTimer = window.setTimeout(() => {
-              setPlayingSong(false);
-              setSingingMode(false);
-              setSingingLyric("");
-              setActiveSong(null);
-              setActiveScaleNoteId(null);
-              setLastPlayedLabel(`Lagu ${song.title} selesai dinyanyikan`);
+              if (!enchorAudioRef.current || enchorAudioRef.current.paused) {
+                setPlayingSong(false);
+                setSingingMode(false);
+                setSingingLyric("");
+                setActiveSong(null);
+                setActiveScaleNoteId(null);
+                setLastPlayedLabel(`Lagu ${song.title} selesai dinyanyikan`);
+              }
             }, 1400);
             songTimersRef.current.push(endTimer);
           }
@@ -2818,7 +2824,7 @@ export default function Home() {
     async (
       customQuery?: string,
       customMd5?: string,
-      playOriginalAudio = false,
+      playOriginalAudio = true,
     ): Promise<{ title: string; artist: string } | null> => {
       const q = (customQuery ?? enchorQuery).trim() || "Bohemian Rhapsody";
       setEnchorLoading(true);
@@ -2897,23 +2903,50 @@ export default function Home() {
           notes: builtNotes,
         };
 
-        playSong(enchorSong, {
-          sing: true,
-          lyrics: sel.lyrics,
-        });
+        const hasStream = Boolean(sel.audioUrl || sel.vocalAudioUrl);
+        if (enchorAudioRef.current) {
+          enchorAudioRef.current.pause();
+          enchorAudioRef.current.currentTime = 0;
+          setEnchorAudioPlaying(false);
+        }
 
-        if (playOriginalAudio && (sel.vocalAudioUrl || sel.audioUrl)) {
-          const streamUrl = sel.vocalAudioUrl || sel.audioUrl!;
+        if (playOriginalAudio && hasStream) {
+          const streamUrl = sel.audioUrl || sel.vocalAudioUrl!;
           if (!enchorAudioRef.current) {
             enchorAudioRef.current = new Audio();
           }
           enchorAudioRef.current.src = streamUrl;
-          enchorAudioRef.current.volume = 0.85;
-          enchorAudioRef.current.onended = () => setEnchorAudioPlaying(false);
+          enchorAudioRef.current.volume = 0.9;
+          enchorAudioRef.current.onended = () => {
+            setEnchorAudioPlaying(false);
+            setPlayingSong(false);
+            setSingingMode(false);
+            setSingingLyric("");
+          };
           void enchorAudioRef.current
             .play()
-            .then(() => setEnchorAudioPlaying(true))
-            .catch(() => setEnchorAudioPlaying(false));
+            .then(() => {
+              setEnchorAudioPlaying(true);
+              playSong(enchorSong, {
+                sing: true,
+                muteSynth: true,
+                lyrics: sel.lyrics,
+              });
+            })
+            .catch(() => {
+              setEnchorAudioPlaying(false);
+              playSong(enchorSong, {
+                sing: true,
+                muteSynth: false,
+                lyrics: sel.lyrics,
+              });
+            });
+        } else {
+          playSong(enchorSong, {
+            sing: true,
+            muteSynth: false,
+            lyrics: sel.lyrics,
+          });
         }
 
         return { title: sel.name, artist: sel.artist };
@@ -2926,39 +2959,6 @@ export default function Home() {
     },
     [enchorQuery, playSong, showToast],
   );
-
-  const toggleEnchorOriginalAudio = useCallback(() => {
-    if (!enchorSelected?.audioUrl && !enchorSelected?.vocalAudioUrl) {
-      showToast("Pilih atau cari lagu Enchor terlebih dahulu.");
-      return;
-    }
-    if (enchorAudioPlaying && enchorAudioRef.current) {
-      enchorAudioRef.current.pause();
-      setEnchorAudioPlaying(false);
-      return;
-    }
-    const streamUrl = enchorSelected.vocalAudioUrl || enchorSelected.audioUrl!;
-    if (!enchorAudioRef.current) {
-      enchorAudioRef.current = new Audio();
-    }
-    if (enchorAudioRef.current.src !== window.location.origin + streamUrl) {
-      enchorAudioRef.current.src = streamUrl;
-    }
-    enchorAudioRef.current.volume = 0.85;
-    enchorAudioRef.current.onended = () => setEnchorAudioPlaying(false);
-    void enchorAudioRef.current
-      .play()
-      .then(() => {
-        setEnchorAudioPlaying(true);
-        setSingingMode(true);
-        showToast(
-          `🎧 Memutar audio asli Enchor: ${enchorSelected.name} - ${enchorSelected.artist}`,
-        );
-      })
-      .catch(() => {
-        showToast("Audio stream ini belum siap diputar di browser.");
-      });
-  }, [enchorAudioPlaying, enchorSelected, showToast]);
 
   const playKartiniSong = useCallback(() => {
     if (playingSong && activeSong?.id === "kartini") {
@@ -5204,6 +5204,23 @@ export default function Home() {
                                 : ""}
                             </span>
                             <div style={{ display: "flex", gap: "6px", marginTop: "6px", flexWrap: "wrap" }}>
+                              {(enchorSelected.audioUrl ||
+                                enchorSelected.vocalAudioUrl) && (
+                                <button
+                                  type="button"
+                                  className={`hw-button ${enchorAudioPlaying ? "primary active-green" : ""}`}
+                                  style={{ minHeight: "30px", padding: "0 10px", fontSize: "11px" }}
+                                  onClick={() =>
+                                    void searchAndSingEnchor(
+                                      enchorSelected.name,
+                                      enchorSelected.md5,
+                                      true,
+                                    )
+                                  }
+                                >
+                                  <span>🎧 Lagu Asli + Karaoke</span>
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 className={`hw-button ${singingMode && !enchorAudioPlaying ? "primary active-green" : ""}`}
@@ -5216,23 +5233,8 @@ export default function Home() {
                                   )
                                 }
                               >
-                                <span>🎤 Vokal Lucu REYA</span>
+                                <span>🎹 Vokal Synth REYA</span>
                               </button>
-                              {(enchorSelected.audioUrl ||
-                                enchorSelected.vocalAudioUrl) && (
-                                <button
-                                  type="button"
-                                  className={`hw-button ${enchorAudioPlaying ? "primary active-green" : ""}`}
-                                  style={{ minHeight: "30px", padding: "0 10px", fontSize: "11px" }}
-                                  onClick={toggleEnchorOriginalAudio}
-                                >
-                                  <span>
-                                    {enchorAudioPlaying
-                                      ? "⏸ Jeda Audio Enchor"
-                                      : "🎧 Audio Asli Enchor + Duet"}
-                                  </span>
-                                </button>
-                              )}
                             </div>
                           </div>
                         </div>
@@ -5260,7 +5262,7 @@ export default function Home() {
                               type="button"
                               className={`enchor-result-btn ${isSelected ? "active" : ""}`}
                               onClick={() =>
-                                void searchAndSingEnchor(item.name, item.md5, false)
+                                void searchAndSingEnchor(item.name, item.md5, true)
                               }
                               title={`${item.name} - ${item.artist}`}
                             >
