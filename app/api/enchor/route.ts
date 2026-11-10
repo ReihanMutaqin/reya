@@ -10,9 +10,17 @@ export interface EnchorNoteItem {
   lyric?: string;
 }
 
+export interface EnchorLyricSyllable {
+  text: string;
+  beginMs: number;
+  endMs: number;
+}
+
 export interface EnchorLyricLine {
   timeMs: number;
+  endMs?: number;
   text: string;
+  syllables?: EnchorLyricSyllable[];
 }
 
 export interface EnchorSongSummary {
@@ -708,6 +716,72 @@ export async function GET(request: Request) {
     return score;
   };
 
+  const parseTimestamp = (ts: string): number => {
+    if (!ts) return 0;
+    if (ts.includes(":")) {
+      const parts = ts.split(":");
+      if (parts.length === 2) {
+        return Math.round((Number(parts[0]) * 60 + Number(parts[1])) * 1000);
+      }
+      if (parts.length === 3) {
+        return Math.round(
+          (Number(parts[0]) * 3600 +
+            Number(parts[1]) * 60 +
+            Number(parts[2])) *
+            1000,
+        );
+      }
+    }
+    return Math.round(Number(ts) * 1000);
+  };
+
+  const parseTtmlLyrics = (ttmlText: string): EnchorLyricLine[] => {
+    const lines: EnchorLyricLine[] = [];
+    const pRegex = /<p\s+([^>]*?)>([\s\S]*?)<\/p>/gi;
+    let pMatch: RegExpExecArray | null;
+    while ((pMatch = pRegex.exec(ttmlText)) !== null) {
+      const pAttrs = pMatch[1];
+      const pBody = pMatch[2];
+      const pBeginMatch = pAttrs.match(/begin="([^"]+)"/);
+      const pEndMatch = pAttrs.match(/end="([^"]+)"/);
+      const pBeginMs = parseTimestamp(pBeginMatch ? pBeginMatch[1] : "0");
+      const pEndMs = pEndMatch ? parseTimestamp(pEndMatch[1]) : pBeginMs + 3200;
+
+      const syllables: EnchorLyricSyllable[] = [];
+      const spanRegex = /<span\s+([^>]*?)>([\s\S]*?)<\/span>/gi;
+      let sMatch: RegExpExecArray | null;
+      let cleanLineText = "";
+      while ((sMatch = spanRegex.exec(pBody)) !== null) {
+        const sAttrs = sMatch[1];
+        const sText = sMatch[2].replace(/<[^>]+>/g, "").trim();
+        if (!sText) continue;
+        const sBeginMatch = sAttrs.match(/begin="([^"]+)"/);
+        const sEndMatch = sAttrs.match(/end="([^"]+)"/);
+        const sBeginMs = parseTimestamp(sBeginMatch ? sBeginMatch[1] : "0");
+        const sEndMs = sEndMatch ? parseTimestamp(sEndMatch[1]) : sBeginMs + 400;
+        syllables.push({ text: sText, beginMs: sBeginMs, endMs: sEndMs });
+        cleanLineText += (cleanLineText ? " " : "") + sText;
+      }
+
+      if (!cleanLineText) {
+        cleanLineText = pBody
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+
+      if (cleanLineText) {
+        lines.push({
+          timeMs: pBeginMs,
+          endMs: pEndMs,
+          text: cleanLineText,
+          syllables: syllables.length > 0 ? syllables : undefined,
+        });
+      }
+    }
+    return lines;
+  };
+
   const parseLrcToLines = (lrcText: string): EnchorLyricLine[] => {
     const lines: EnchorLyricLine[] = [];
     const regex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/g;
@@ -871,7 +945,59 @@ export async function GET(request: Request) {
       }
     }
 
-    if (chosen.source === "enchor" && /^[a-f0-9]{32}$/i.test(chosen.md5)) {
+    // 1. BitChord Engine: High-precision Syllable-timed TTML Lyrics from BiniLyrics / LRC.red
+    try {
+      const biniRes = await fetch(
+        `https://lyrics-api.binimum.org/search?q=${encodeURIComponent(
+          `${chosen.name} ${chosen.artist}`,
+        )}`,
+        { signal: AbortSignal.timeout(3500) },
+      );
+      if (biniRes.ok) {
+        const biniData = (await biniRes.json()) as {
+          results?: Array<{
+            track_name?: string;
+            artist_name?: string;
+            lyricsUrl?: string;
+            timing_type?: string;
+          }>;
+        };
+        const cName = chosen.name.toLowerCase();
+        const cArtist = chosen.artist.toLowerCase();
+        const match =
+          biniData.results?.find(
+            (r) =>
+              r.lyricsUrl &&
+              String(r.track_name || "").toLowerCase().includes(cName) &&
+              String(r.artist_name || "").toLowerCase().includes(cArtist),
+          ) ??
+          biniData.results?.find(
+            (r) =>
+              r.lyricsUrl &&
+              (String(r.track_name || "").toLowerCase().includes(cName) ||
+                String(r.artist_name || "").toLowerCase().includes(cArtist)),
+          ) ??
+          biniData.results?.[0];
+
+        if (match?.lyricsUrl) {
+          const ttmlRes = await fetch(match.lyricsUrl, {
+            signal: AbortSignal.timeout(4000),
+          });
+          if (ttmlRes.ok) {
+            const ttmlText = await ttmlRes.text();
+            const parsedTtml = parseTtmlLyrics(ttmlText);
+            if (parsedTtml.length > 0) {
+              lyrics = parsedTtml;
+            }
+          }
+        }
+      }
+    } catch {
+      // Fall through to Enchor SNG and LRCLIB
+    }
+
+    // 2. Fallback: Enchor SNG chart/mid lyrics if BiniLyrics has no match
+    if (lyrics.length === 0 && chosen.source === "enchor" && /^[a-f0-9]{32}$/i.test(chosen.md5)) {
       const sngIndex = await fetchSngIndex(chosen.md5);
       if (sngIndex) {
         const hasSongAudio =

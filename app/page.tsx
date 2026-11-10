@@ -1505,6 +1505,7 @@ function RobotCRTUnit({
   musicActive = false,
   singingActive = false,
   singingLyric = "",
+  singingMouthOpen = false,
   singingSongTitle = "",
   lastActivity = 0,
   onPoke,
@@ -1517,6 +1518,7 @@ function RobotCRTUnit({
   musicActive?: boolean;
   singingActive?: boolean;
   singingLyric?: string;
+  singingMouthOpen?: boolean;
   singingSongTitle?: string;
   lastActivity?: number;
   onPoke?: (kind?: RobotInteractionType) => void;
@@ -1991,9 +1993,9 @@ function RobotCRTUnit({
           <span className="cheek" />
         </div>
 
-        {speaking ? (
+        {speaking || (singingActive && singingMouthOpen) ? (
           <div
-            className="crt-mouth is-speaking"
+            className={`crt-mouth ${speaking ? "is-speaking" : "is-singing-mouth"}`}
             style={{
               transform: `translate(${eyeShiftX}px, ${eyeShiftY}px)`,
             }}
@@ -2229,10 +2231,16 @@ export default function Home() {
     albumArtUrl: string | null;
     audioUrl: string | null;
     vocalAudioUrl: string | null;
-    lyrics: Array<{ timeMs: number; text: string }>;
+    lyrics: Array<{
+      timeMs: number;
+      endMs?: number;
+      text: string;
+      syllables?: Array<{ text: string; beginMs: number; endMs: number }>;
+    }>;
   } | null>(null);
   const [singingMode, setSingingMode] = useState(false);
   const [singingLyric, setSingingLyric] = useState("");
+  const [singingMouthOpen, setSingingMouthOpen] = useState(false);
   const [enchorAudioPlaying, setEnchorAudioPlaying] = useState(false);
   const enchorAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -2539,6 +2547,7 @@ export default function Home() {
     setEnchorAudioPlaying(false);
     setSingingMode(false);
     setSingingLyric("");
+    setSingingMouthOpen(false);
     setPlayingSong(false);
     setActiveSong(null);
   }, []);
@@ -2763,7 +2772,12 @@ export default function Home() {
       options?: {
         sing?: boolean;
         muteSynth?: boolean;
-        lyrics?: Array<{ timeMs: number; text: string }>;
+        lyrics?: Array<{
+          timeMs: number;
+          endMs?: number;
+          text: string;
+          syllables?: Array<{ text: string; beginMs: number; endMs: number }>;
+        }>;
       },
     ) => {
       const audio = ensureMusicAudio();
@@ -2792,11 +2806,37 @@ export default function Home() {
 
       if (options?.lyrics && options.lyrics.length > 0) {
         setSingingLyric(options.lyrics[0].text);
+        setSingingMouthOpen(false);
+
         options.lyrics.forEach((line) => {
+          // 1. Schedule lyric display for the whole line
           const lTimer = window.setTimeout(() => {
             setSingingLyric(line.text);
           }, Math.max(0, line.timeMs));
           songTimersRef.current.push(lTimer);
+
+          // 2. Schedule precise syllable-by-syllable mouth opening (BitChord accuracy)
+          if (line.syllables && line.syllables.length > 0) {
+            line.syllables.forEach((syl) => {
+              const openTimer = window.setTimeout(() => {
+                if (musicPlayingRef.current) setSingingMouthOpen(true);
+              }, Math.max(0, syl.beginMs));
+              const closeTimer = window.setTimeout(() => {
+                if (musicPlayingRef.current) setSingingMouthOpen(false);
+              }, Math.max(0, syl.endMs));
+              songTimersRef.current.push(openTimer, closeTimer);
+            });
+          } else {
+            // Line-level fallback: mouth moves during active lyric line, closes during instrumental gap
+            const openTimer = window.setTimeout(() => {
+              if (musicPlayingRef.current) setSingingMouthOpen(true);
+            }, Math.max(0, line.timeMs));
+            const lineEndMs = line.endMs || line.timeMs + 2800;
+            const closeTimer = window.setTimeout(() => {
+              if (musicPlayingRef.current) setSingingMouthOpen(false);
+            }, Math.max(0, lineEndMs));
+            songTimersRef.current.push(openTimer, closeTimer);
+          }
         });
       }
 
@@ -2861,6 +2901,7 @@ export default function Home() {
         setPlayingSong(false);
         setSingingMode(false);
         setSingingLyric("");
+        setSingingMouthOpen(false);
         setActiveSong(null);
         setActiveScaleNoteId(null);
         setLastPlayedLabel(`Lagu ${song.title} selesai dinyanyikan`);
@@ -2974,6 +3015,7 @@ export default function Home() {
             setPlayingSong(false);
             setSingingMode(false);
             setSingingLyric("");
+            setSingingMouthOpen(false);
           };
           void enchorAudioRef.current
             .play()
@@ -4536,6 +4578,7 @@ export default function Home() {
               musicActive={musicPlaying || playingSong || playingMelody}
               singingActive={singingMode || enchorAudioPlaying}
               singingLyric={singingLyric}
+              singingMouthOpen={singingMouthOpen}
               singingSongTitle={
                 enchorSelected
                   ? `${enchorSelected.name} · ${enchorSelected.artist}`
