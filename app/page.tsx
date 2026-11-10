@@ -502,7 +502,6 @@ function buildScale(startOctave: number, numOctaves: number) {
 }
 
 const melodyScale = buildScale(3, 3);
-const bassScale = buildScale(2, 2);
 
 function yToNote(y: number, scale: { freq: number; name: string }[]) {
   const t = 1 - Math.max(0, Math.min(0.999, y));
@@ -557,13 +556,14 @@ function isDrumLike(mode: MusicModeId) {
   return mode === "marimba";
 }
 
-// 1. Concert Grand Acoustic Piano
+// 1. Concert Grand Acoustic Piano (Long Two-Stage Singing Sustain)
 function playAcousticPiano(
   ctx: AudioContext,
   dest: AudioNode,
   freq: number,
   pan = 0,
   velocity = 0.88,
+  sustainDuration = 3.8,
 ) {
   const t = ctx.currentTime;
   const panner = ctx.createStereoPanner();
@@ -573,14 +573,25 @@ function playAcousticPiano(
   bodyFilter.type = "peaking";
   bodyFilter.frequency.setValueAtTime(680, t);
   bodyFilter.Q.setValueAtTime(1.1, t);
-  bodyFilter.gain.setValueAtTime(3.5, t);
+  bodyFilter.gain.setValueAtTime(3.8, t);
 
+  const warmthFilter = ctx.createBiquadFilter();
+  warmthFilter.type = "lowshelf";
+  warmthFilter.frequency.setValueAtTime(280, t);
+  warmthFilter.gain.setValueAtTime(3.2, t);
+
+  // Master envelope: fast attack -> warm sustain plateau -> long natural decay
   const mainGain = ctx.createGain();
   mainGain.gain.setValueAtTime(0.0001, t);
-  mainGain.gain.linearRampToValueAtTime(0.42 * velocity, t + 0.005);
-  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 2.8);
+  mainGain.gain.linearRampToValueAtTime(0.48 * velocity, t + 0.006);
+  mainGain.gain.exponentialRampToValueAtTime(0.32 * velocity, t + 0.22);
+  mainGain.gain.exponentialRampToValueAtTime(
+    0.16 * velocity,
+    t + sustainDuration * 0.55,
+  );
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + sustainDuration);
 
-  const hammerLength = 0.015;
+  const hammerLength = 0.016;
   const hammerBuf = ctx.createBuffer(
     1,
     Math.max(1, Math.floor(ctx.sampleRate * hammerLength)),
@@ -588,58 +599,64 @@ function playAcousticPiano(
   );
   const data = hammerBuf.getChannelData(0);
   for (let i = 0; i < data.length; i++) {
-    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.003));
+    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.0035));
   }
   const hammerSrc = ctx.createBufferSource();
   hammerSrc.buffer = hammerBuf;
   const hammerFilter = ctx.createBiquadFilter();
   hammerFilter.type = "bandpass";
-  hammerFilter.frequency.setValueAtTime(Math.min(3200, freq * 2.8), t);
-  hammerFilter.Q.setValueAtTime(1.8, t);
+  hammerFilter.frequency.setValueAtTime(Math.min(3000, freq * 2.6), t);
+  hammerFilter.Q.setValueAtTime(1.6, t);
   const hammerGain = ctx.createGain();
-  hammerGain.gain.setValueAtTime(0.28 * velocity, t);
+  hammerGain.gain.setValueAtTime(0.24 * velocity, t);
   hammerGain.gain.exponentialRampToValueAtTime(0.001, t + hammerLength);
   hammerSrc.connect(hammerFilter);
   hammerFilter.connect(hammerGain);
   hammerGain.connect(mainGain);
   hammerSrc.start(t);
 
+  // Unison strings + harmonic series (no double-exponential decay on fundamental!)
   const partials: [number, number, number][] = [
-    [1.0, 1.0, 1.0],
-    [1.0018, 0.65, 0.96],
-    [2.0008, 0.48, 0.76],
-    [3.002, 0.28, 0.54],
-    [4.005, 0.14, 0.38],
-    [5.009, 0.07, 0.26],
-    [6.015, 0.03, 0.18],
+    [1.0, 0.42, 1.0],
+    [1.0016, 0.32, 0.98],
+    [0.9985, 0.24, 0.96],
+    [2.0006, 0.22, 0.85],
+    [3.0018, 0.12, 0.68],
+    [4.004, 0.06, 0.48],
+    [5.008, 0.025, 0.32],
   ];
 
-  partials.forEach(([ratio, amp, decayMult]) => {
+  partials.forEach(([ratio, amp, durMult]) => {
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
-    osc.type = ratio > 2.5 ? "sine" : "triangle";
+    osc.type = ratio < 1.5 ? "triangle" : "sine";
     osc.frequency.setValueAtTime(freq * ratio, t);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(amp * velocity * 0.38, t + 0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.5 * decayMult);
+    const partDur = sustainDuration * durMult;
+    g.gain.setValueAtTime(amp * velocity, t);
+    if (ratio > 2.2) {
+      // Higher harmonics mellow out gently while the fundamental sustains long
+      g.gain.exponentialRampToValueAtTime(amp * velocity * 0.15, t + partDur * 0.6);
+    }
     osc.connect(g);
     g.connect(mainGain);
     osc.start(t);
-    osc.stop(t + 2.6 * decayMult);
+    osc.stop(t + partDur + 0.05);
   });
 
-  mainGain.connect(bodyFilter);
+  mainGain.connect(warmthFilter);
+  warmthFilter.connect(bodyFilter);
   bodyFilter.connect(panner);
   panner.connect(dest);
 }
 
-// 2. Glockenspiel / Kalimba (Physical Chime Modes)
+// 2. Glockenspiel / Kalimba (Long Crystal Sustain)
 function playGlockenspiel(
   ctx: AudioContext,
   dest: AudioNode,
   freq: number,
   pan = 0,
   velocity = 0.82,
+  sustainDuration = 3.6,
 ) {
   const t = ctx.currentTime;
   const panner = ctx.createStereoPanner();
@@ -647,15 +664,16 @@ function playGlockenspiel(
 
   const mainGain = ctx.createGain();
   mainGain.gain.setValueAtTime(0.0001, t);
-  mainGain.gain.linearRampToValueAtTime(0.38 * velocity, t + 0.002);
-  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 2.6);
+  mainGain.gain.linearRampToValueAtTime(0.42 * velocity, t + 0.003);
+  mainGain.gain.exponentialRampToValueAtTime(0.26 * velocity, t + 0.25);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + sustainDuration);
 
   const click = ctx.createOscillator();
   const clickGain = ctx.createGain();
   click.type = "sine";
   click.frequency.setValueAtTime(freq * 5.8, t);
   click.frequency.exponentialRampToValueAtTime(freq * 1.5, t + 0.02);
-  clickGain.gain.setValueAtTime(0.4 * velocity, t);
+  clickGain.gain.setValueAtTime(0.32 * velocity, t);
   clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
   click.connect(clickGain);
   clickGain.connect(mainGain);
@@ -663,37 +681,42 @@ function playGlockenspiel(
   click.stop(t + 0.03);
 
   const modes: [number, number, number][] = [
-    [1.0, 1.0, 1.0],
-    [2.756, 0.38, 0.7],
-    [5.404, 0.16, 0.45],
-    [8.933, 0.06, 0.25],
+    [1.0, 0.45, 1.0],
+    [1.0012, 0.25, 0.95],
+    [2.756, 0.16, 0.65],
+    [5.404, 0.07, 0.4],
   ];
 
-  modes.forEach(([ratio, amp, decayMult]) => {
+  modes.forEach(([ratio, amp, durMult]) => {
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     osc.type = "sine";
     osc.frequency.setValueAtTime(freq * ratio, t);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(amp * velocity * 0.4, t + 0.002);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4 * decayMult);
+    g.gain.setValueAtTime(amp * velocity, t);
+    if (ratio > 2) {
+      g.gain.exponentialRampToValueAtTime(
+        amp * velocity * 0.1,
+        t + sustainDuration * durMult,
+      );
+    }
     osc.connect(g);
     g.connect(mainGain);
     osc.start(t);
-    osc.stop(t + 2.5 * decayMult);
+    osc.stop(t + sustainDuration * durMult + 0.05);
   });
 
   mainGain.connect(panner);
   panner.connect(dest);
 }
 
-// 3. Acoustic Plucked Guitar / Harp
+// 3. Acoustic Plucked Guitar / Harp (Warm Resonant Sustain)
 function playAcousticGuitar(
   ctx: AudioContext,
   dest: AudioNode,
   freq: number,
   pan = 0,
   velocity = 0.86,
+  sustainDuration = 3.5,
 ) {
   const t = ctx.currentTime;
   const panner = ctx.createStereoPanner();
@@ -702,21 +725,22 @@ function playAcousticGuitar(
   const bodyAir = ctx.createBiquadFilter();
   bodyAir.type = "peaking";
   bodyAir.frequency.setValueAtTime(220, t);
-  bodyAir.Q.setValueAtTime(2.2, t);
+  bodyAir.Q.setValueAtTime(2.0, t);
   bodyAir.gain.setValueAtTime(4.0, t);
 
   const bodyWood = ctx.createBiquadFilter();
   bodyWood.type = "peaking";
   bodyWood.frequency.setValueAtTime(480, t);
-  bodyWood.Q.setValueAtTime(1.8, t);
-  bodyWood.gain.setValueAtTime(3.0, t);
+  bodyWood.Q.setValueAtTime(1.6, t);
+  bodyWood.gain.setValueAtTime(3.2, t);
 
   const mainGain = ctx.createGain();
   mainGain.gain.setValueAtTime(0.0001, t);
-  mainGain.gain.linearRampToValueAtTime(0.44 * velocity, t + 0.006);
-  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+  mainGain.gain.linearRampToValueAtTime(0.46 * velocity, t + 0.006);
+  mainGain.gain.exponentialRampToValueAtTime(0.28 * velocity, t + 0.22);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + sustainDuration);
 
-  const pluckLen = 0.012;
+  const pluckLen = 0.014;
   const pluckBuf = ctx.createBuffer(
     1,
     Math.max(1, Math.floor(ctx.sampleRate * pluckLen)),
@@ -725,37 +749,41 @@ function playAcousticGuitar(
   const pData = pluckBuf.getChannelData(0);
   for (let i = 0; i < pData.length; i++) {
     pData[i] =
-      (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.0025));
+      (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.0028));
   }
   const pluckSrc = ctx.createBufferSource();
   pluckSrc.buffer = pluckBuf;
   const pluckGain = ctx.createGain();
-  pluckGain.gain.setValueAtTime(0.3 * velocity, t);
+  pluckGain.gain.setValueAtTime(0.26 * velocity, t);
   pluckGain.gain.exponentialRampToValueAtTime(0.001, t + pluckLen);
   pluckSrc.connect(pluckGain);
   pluckGain.connect(mainGain);
   pluckSrc.start(t);
 
   const partials: [number, number, number][] = [
-    [1.0, 1.0, 1.0],
-    [2.0, 0.55, 0.65],
-    [3.0, 0.32, 0.45],
-    [4.0, 0.18, 0.3],
-    [5.0, 0.09, 0.2],
+    [1.0, 0.44, 1.0],
+    [1.0014, 0.26, 0.95],
+    [2.0, 0.22, 0.78],
+    [3.0, 0.12, 0.55],
+    [4.0, 0.06, 0.35],
   ];
 
-  partials.forEach(([ratio, amp, decayMult]) => {
+  partials.forEach(([ratio, amp, durMult]) => {
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
-    osc.type = ratio === 1 ? "triangle" : "sine";
+    osc.type = ratio < 1.5 ? "triangle" : "sine";
     osc.frequency.setValueAtTime(freq * ratio, t);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(amp * velocity * 0.36, t + 0.005);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2 * decayMult);
+    g.gain.setValueAtTime(amp * velocity, t);
+    if (ratio >= 2) {
+      g.gain.exponentialRampToValueAtTime(
+        amp * velocity * 0.12,
+        t + sustainDuration * durMult,
+      );
+    }
     osc.connect(g);
     g.connect(mainGain);
     osc.start(t);
-    osc.stop(t + 2.3 * decayMult);
+    osc.stop(t + sustainDuration * durMult + 0.05);
   });
 
   mainGain.connect(bodyAir);
@@ -764,13 +792,14 @@ function playAcousticGuitar(
   panner.connect(dest);
 }
 
-// 4. Acoustic Flute / Seruling
+// 4. Acoustic Flute / Seruling (Long Breath Sustain)
 function playAcousticFlute(
   ctx: AudioContext,
   dest: AudioNode,
   freq: number,
   pan = 0,
-  velocity = 0.8,
+  velocity = 0.82,
+  sustainDuration = 3.2,
 ) {
   const t = ctx.currentTime;
   const panner = ctx.createStereoPanner();
@@ -778,8 +807,9 @@ function playAcousticFlute(
 
   const mainGain = ctx.createGain();
   mainGain.gain.setValueAtTime(0.0001, t);
-  mainGain.gain.linearRampToValueAtTime(0.35 * velocity, t + 0.045);
-  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
+  mainGain.gain.linearRampToValueAtTime(0.38 * velocity, t + 0.045);
+  mainGain.gain.setValueAtTime(0.34 * velocity, t + sustainDuration * 0.65);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + sustainDuration);
 
   const breathLen = 0.06;
   const breathBuf = ctx.createBuffer(
@@ -799,7 +829,7 @@ function playAcousticFlute(
   breathFilter.frequency.setValueAtTime(freq * 1.8, t);
   breathFilter.Q.setValueAtTime(3.0, t);
   const breathGain = ctx.createGain();
-  breathGain.gain.setValueAtTime(0.22 * velocity, t);
+  breathGain.gain.setValueAtTime(0.2 * velocity, t);
   breathGain.gain.exponentialRampToValueAtTime(0.001, t + breathLen);
   breathSrc.connect(breathFilter);
   breathFilter.connect(breathGain);
@@ -813,11 +843,11 @@ function playAcousticFlute(
 
   lfo.frequency.setValueAtTime(5.3, t);
   lfoGain.gain.setValueAtTime(0, t);
-  lfoGain.gain.linearRampToValueAtTime(freq * 0.012, t + 0.25);
+  lfoGain.gain.linearRampToValueAtTime(freq * 0.012, t + 0.22);
   lfo.connect(lfoGain);
   lfoGain.connect(osc.frequency);
   lfo.start(t);
-  lfo.stop(t + 2.0);
+  lfo.stop(t + sustainDuration + 0.05);
 
   osc.type = "sine";
   osc.frequency.setValueAtTime(freq, t);
@@ -826,9 +856,9 @@ function playAcousticFlute(
   osc2.frequency.setValueAtTime(freq * 2.0, t);
 
   const g1 = ctx.createGain();
-  g1.gain.setValueAtTime(0.38 * velocity, t);
+  g1.gain.setValueAtTime(0.42 * velocity, t);
   const g2 = ctx.createGain();
-  g2.gain.setValueAtTime(0.09 * velocity, t);
+  g2.gain.setValueAtTime(0.11 * velocity, t);
 
   osc.connect(g1);
   osc2.connect(g2);
@@ -837,20 +867,21 @@ function playAcousticFlute(
 
   osc.start(t);
   osc2.start(t);
-  osc.stop(t + 1.9);
-  osc2.stop(t + 1.9);
+  osc.stop(t + sustainDuration + 0.05);
+  osc2.stop(t + sustainDuration + 0.05);
 
   mainGain.connect(panner);
   panner.connect(dest);
 }
 
-// 5. Acoustic Rosewood Marimba
+// 5. Acoustic Rosewood Marimba (Warm Extended Resonance)
 function playAcousticMarimba(
   ctx: AudioContext,
   dest: AudioNode,
   freq: number,
   pan = 0,
   velocity = 0.85,
+  sustainDuration = 2.8,
 ) {
   const t = ctx.currentTime;
   const panner = ctx.createStereoPanner();
@@ -858,15 +889,16 @@ function playAcousticMarimba(
 
   const mainGain = ctx.createGain();
   mainGain.gain.setValueAtTime(0.0001, t);
-  mainGain.gain.linearRampToValueAtTime(0.44 * velocity, t + 0.003);
-  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
+  mainGain.gain.linearRampToValueAtTime(0.46 * velocity, t + 0.004);
+  mainGain.gain.exponentialRampToValueAtTime(0.26 * velocity, t + 0.2);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + sustainDuration);
 
   const thud = ctx.createOscillator();
   const thudGain = ctx.createGain();
   thud.type = "sine";
   thud.frequency.setValueAtTime(freq * 3.2, t);
   thud.frequency.exponentialRampToValueAtTime(freq * 0.8, t + 0.02);
-  thudGain.gain.setValueAtTime(0.32 * velocity, t);
+  thudGain.gain.setValueAtTime(0.28 * velocity, t);
   thudGain.gain.exponentialRampToValueAtTime(0.001, t + 0.022);
   thud.connect(thudGain);
   thudGain.connect(mainGain);
@@ -874,27 +906,203 @@ function playAcousticMarimba(
   thud.stop(t + 0.025);
 
   const modes: [number, number, number][] = [
-    [1.0, 1.0, 1.0],
-    [3.98, 0.42, 0.4],
-    [9.2, 0.12, 0.18],
+    [1.0, 0.46, 1.0],
+    [1.0015, 0.24, 0.95],
+    [3.98, 0.18, 0.5],
+    [9.2, 0.05, 0.22],
   ];
 
-  modes.forEach(([ratio, amp, decayMult]) => {
+  modes.forEach(([ratio, amp, durMult]) => {
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
-    osc.type = "sine";
+    osc.type = ratio < 1.5 ? "triangle" : "sine";
     osc.frequency.setValueAtTime(freq * ratio, t);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(amp * velocity * 0.38, t + 0.003);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4 * decayMult);
+    g.gain.setValueAtTime(amp * velocity, t);
+    if (ratio > 2) {
+      g.gain.exponentialRampToValueAtTime(
+        amp * velocity * 0.1,
+        t + sustainDuration * durMult,
+      );
+    }
     osc.connect(g);
     g.connect(mainGain);
     osc.start(t);
-    osc.stop(t + 1.5 * decayMult);
+    osc.stop(t + sustainDuration * durMult + 0.05);
   });
 
   mainGain.connect(panner);
   panner.connect(dest);
+}
+
+interface SustainedVoiceHandle {
+  noteId: string;
+  freq: number;
+  startedAt: number;
+  release: (fast?: boolean) => void;
+  updatePan: (pan: number) => void;
+}
+
+// Continuous Hold-to-Sustain Piano & Instrument Voice (rings as long as key/gesture is held!)
+function startSustainedVoice(
+  ctx: AudioContext,
+  dest: AudioNode,
+  freq: number,
+  mode: MusicModeId,
+  noteId: string,
+  pan = 0,
+  isBass = false,
+): SustainedVoiceHandle {
+  const t = ctx.currentTime;
+  const actualFreq = isBass ? freq * 0.5 : freq;
+  const vel = isBass ? 0.8 : 0.9;
+
+  const panner = ctx.createStereoPanner();
+  panner.pan.setValueAtTime(Math.max(-0.85, Math.min(0.85, pan)), t);
+
+  const bodyFilter = ctx.createBiquadFilter();
+  bodyFilter.type = "peaking";
+  bodyFilter.frequency.setValueAtTime(mode === "guitar" ? 480 : 680, t);
+  bodyFilter.Q.setValueAtTime(1.2, t);
+  bodyFilter.gain.setValueAtTime(3.6, t);
+
+  const warmthFilter = ctx.createBiquadFilter();
+  warmthFilter.type = "lowshelf";
+  warmthFilter.frequency.setValueAtTime(260, t);
+  warmthFilter.gain.setValueAtTime(3.0, t);
+
+  const voiceGain = ctx.createGain();
+  voiceGain.gain.setValueAtTime(0.0001, t);
+  const attackTime = mode === "flute" ? 0.045 : 0.006;
+  const peakLevel = 0.48 * vel;
+  const sustainLevel = mode === "flute" ? 0.42 * vel : 0.34 * vel;
+  voiceGain.gain.linearRampToValueAtTime(peakLevel, t + attackTime);
+  voiceGain.gain.exponentialRampToValueAtTime(sustainLevel, t + attackTime + 0.2);
+
+  // Initial acoustic hammer/pluck transient
+  const transLen = mode === "flute" ? 0.05 : 0.015;
+  const transBuf = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * transLen)),
+    ctx.sampleRate,
+  );
+  const tData = transBuf.getChannelData(0);
+  for (let i = 0; i < tData.length; i++) {
+    tData[i] =
+      (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.0035));
+  }
+  const transSrc = ctx.createBufferSource();
+  transSrc.buffer = transBuf;
+  const transFilter = ctx.createBiquadFilter();
+  transFilter.type = "bandpass";
+  transFilter.frequency.setValueAtTime(Math.min(2800, actualFreq * 2.5), t);
+  const transGain = ctx.createGain();
+  transGain.gain.setValueAtTime(0.24 * vel, t);
+  transGain.gain.exponentialRampToValueAtTime(0.001, t + transLen);
+  transSrc.connect(transFilter);
+  transFilter.connect(transGain);
+  transGain.connect(voiceGain);
+  transSrc.start(t);
+
+  const oscillators: OscillatorNode[] = [];
+
+  // Subtle natural string/breath shimmer LFO for continuous sustain realism
+  const lfo = ctx.createOscillator();
+  const lfoGain = ctx.createGain();
+  lfo.frequency.setValueAtTime(mode === "flute" ? 5.2 : 4.2, t);
+  lfoGain.gain.setValueAtTime(0, t);
+  lfoGain.gain.linearRampToValueAtTime(
+    actualFreq * (mode === "flute" ? 0.011 : 0.0025),
+    t + 0.25,
+  );
+  lfo.connect(lfoGain);
+  lfo.start(t);
+  oscillators.push(lfo);
+
+  const partials: [number, number, OscillatorType][] =
+    mode === "bells"
+      ? [
+          [1.0, 0.45, "sine"],
+          [1.0015, 0.28, "sine"],
+          [2.756, 0.14, "sine"],
+          [5.404, 0.05, "sine"],
+        ]
+      : mode === "flute"
+        ? [
+            [1.0, 0.46, "sine"],
+            [2.0, 0.14, "triangle"],
+            [3.0, 0.05, "sine"],
+          ]
+        : [
+            [1.0, 0.42, "triangle"],
+            [1.0017, 0.32, "triangle"],
+            [0.9984, 0.24, "sine"],
+            [2.0006, 0.2, "sine"],
+            [3.0015, 0.1, "sine"],
+            [4.003, 0.04, "sine"],
+          ];
+
+  partials.forEach(([ratio, amp, waveType], idx) => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = waveType;
+    osc.frequency.setValueAtTime(actualFreq * ratio, t);
+    if (idx === 0) {
+      lfoGain.connect(osc.frequency);
+    }
+    g.gain.setValueAtTime(amp * vel, t);
+    if (ratio >= 3) {
+      // Upper harmonics soften slightly into a warm, round piano sustain pad
+      g.gain.exponentialRampToValueAtTime(amp * vel * 0.35, t + 0.8);
+    }
+    osc.connect(g);
+    g.connect(voiceGain);
+    osc.start(t);
+    oscillators.push(osc);
+  });
+
+  voiceGain.connect(warmthFilter);
+  warmthFilter.connect(bodyFilter);
+  bodyFilter.connect(panner);
+  panner.connect(dest);
+
+  let released = false;
+  const startedAt = performance.now();
+  return {
+    noteId,
+    freq: actualFreq,
+    startedAt,
+    updatePan: (nextPan: number) => {
+      if (released) return;
+      panner.pan.setTargetAtTime(
+        Math.max(-0.85, Math.min(0.85, nextPan)),
+        ctx.currentTime,
+        0.04,
+      );
+    },
+    release: (fast = false) => {
+      if (released) return;
+      released = true;
+      const now = ctx.currentTime;
+      const heldMs = performance.now() - startedAt;
+      // If tapped briefly, let it ring like a piano sustain pedal (1.65s); if held long, smooth damper release (0.65s)
+      const relDur = fast ? 0.24 : heldMs < 320 ? 1.65 : 0.65;
+      try {
+        voiceGain.gain.cancelScheduledValues(now);
+        const currVal = Math.max(0.0002, voiceGain.gain.value || sustainLevel);
+        voiceGain.gain.setValueAtTime(currVal, now);
+        voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + relDur);
+        oscillators.forEach((osc) => {
+          try {
+            osc.stop(now + relDur + 0.05);
+          } catch {
+            // Already stopped
+          }
+        });
+      } catch {
+        // Context closed
+      }
+    },
+  };
 }
 
 function playNote(
@@ -923,39 +1131,6 @@ function playNote(
   } else {
     playAcousticPiano(ctx, dest, actualFreq, pan, vel);
   }
-}
-
-function playChord(
-  ctx: AudioContext,
-  dest: AudioNode,
-  freq: number,
-  mode: MusicModeId,
-  brightness = 0.5,
-  pan = 0,
-) {
-  playNote(ctx, dest, freq, mode, brightness, pan, false);
-  window.setTimeout(() => {
-    playNote(
-      ctx,
-      dest,
-      freq * Math.pow(2, 4 / 12),
-      mode,
-      brightness,
-      pan + 0.1,
-      false,
-    );
-  }, 22);
-  window.setTimeout(() => {
-    playNote(
-      ctx,
-      dest,
-      freq * Math.pow(2, 7 / 12),
-      mode,
-      brightness,
-      pan + 0.2,
-      false,
-    );
-  }, 44);
 }
 
 function scheduleDrumHit(
@@ -1028,21 +1203,6 @@ function scheduleBeatPattern(
   for (const [pad, step] of patterns[patternIndex % patterns.length]) {
     scheduleDrumHit(context, destination, pad, startAt + step * 0.15);
   }
-}
-
-function playDropEffect(ctx: AudioContext, dest: AudioNode) {
-  const t = ctx.currentTime;
-  const osc = ctx.createOscillator();
-  const g = ctx.createGain();
-  osc.type = "sine";
-  osc.frequency.setValueAtTime(200, t);
-  osc.frequency.exponentialRampToValueAtTime(35, t + 0.5);
-  g.gain.setValueAtTime(0.55, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
-  osc.connect(g);
-  g.connect(dest);
-  osc.start(t);
-  osc.stop(t + 0.9);
 }
 
 const starterMessages: Message[] = [
@@ -1623,6 +1783,22 @@ export default function Home() {
     melody: { freq: 0, at: 0 },
     bass: { freq: 0, at: 0 },
   });
+  const sustainedVoicesRef = useRef<{
+    melody: SustainedVoiceHandle | null;
+    bass: SustainedVoiceHandle | null;
+    manual: SustainedVoiceHandle | null;
+  }>({
+    melody: null,
+    bass: null,
+    manual: null,
+  });
+  const handNoteCandidateRef = useRef<{
+    melody: { id: string | null; frames: number };
+    bass: { id: string | null; frames: number };
+  }>({
+    melody: { id: null, frames: 0 },
+    bass: { id: null, frames: 0 },
+  });
   const previousPalmRef = useRef<{ y: number; at: number } | null>(null);
   const lastStrikeAtRef = useRef(0);
   const micRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1832,8 +2008,20 @@ export default function Home() {
     setActiveSong(null);
   }, []);
 
+  const releaseAllSustainedVoices = useCallback((fast = false) => {
+    sustainedVoicesRef.current.melody?.release(fast);
+    sustainedVoicesRef.current.bass?.release(fast);
+    sustainedVoicesRef.current.manual?.release(fast);
+    sustainedVoicesRef.current = { melody: null, bass: null, manual: null };
+    handNoteCandidateRef.current = {
+      melody: { id: null, frames: 0 },
+      bass: { id: null, frames: 0 },
+    };
+  }, []);
+
   const stopMusic = useCallback(() => {
     stopSong();
+    releaseAllSustainedVoices(true);
     if (noteReleaseTimerRef.current)
       window.clearTimeout(noteReleaseTimerRef.current);
     noteReleaseTimerRef.current = null;
@@ -1857,29 +2045,84 @@ export default function Home() {
     setLastPlayedLabel(
       "Sensor musik berhenti: buka telapak tangan atau sentuh tangga nada untuk mulai",
     );
-  }, [stopSong]);
+  }, [releaseAllSustainedVoices, stopSong]);
 
   const startMusic = useCallback(() => {
     if (!ensureMusicAudio()) return;
     musicPlayingRef.current = true;
     setMusicPlaying(true);
     setLastPlayedLabel(
-      "Sensor aktif: angkat telunjuk di kamera atau sentuh tangga nada di bawah",
+      "Sensor aktif: tahan pose jari di kamera atau tekan-tahan kartu nada untuk nada panjang",
     );
   }, [ensureMusicAudio]);
 
-  const selectMusicMode = useCallback((nextMode: MusicModeId) => {
-    musicModeRef.current = nextMode;
-    setMusicMode(nextMode);
-    handMusicRef.current = {
-      melody: { freq: 0, at: 0 },
-      bass: { freq: 0, at: 0 },
-    };
-    previousPalmRef.current = null;
-    setHandPositions({});
-    const next =
-      musicModes.find((mode) => mode.id === nextMode) ?? musicModes[0];
-    setLastPlayedLabel(`${next.bankCode} // ${next.name} siap dimainkan`);
+  const selectMusicMode = useCallback(
+    (nextMode: MusicModeId) => {
+      releaseAllSustainedVoices(true);
+      musicModeRef.current = nextMode;
+      setMusicMode(nextMode);
+      handMusicRef.current = {
+        melody: { freq: 0, at: 0 },
+        bass: { freq: 0, at: 0 },
+      };
+      previousPalmRef.current = null;
+      setHandPositions({});
+      const next =
+        musicModes.find((mode) => mode.id === nextMode) ?? musicModes[0];
+      setLastPlayedLabel(`${next.bankCode} // ${next.name} siap dimainkan`);
+    },
+    [releaseAllSustainedVoices],
+  );
+
+  const startScaleNoteHold = useCallback(
+    (note: ScaleNote, pan = 0) => {
+      recordActivity();
+      const audio = ensureMusicAudio();
+      if (!audio) return;
+      if (!musicPlayingRef.current) {
+        musicPlayingRef.current = true;
+        setMusicPlaying(true);
+      }
+
+      if (scaleReleaseTimerRef.current) {
+        window.clearTimeout(scaleReleaseTimerRef.current);
+        scaleReleaseTimerRef.current = null;
+      }
+
+      sustainedVoicesRef.current.manual?.release(true);
+      sustainedVoicesRef.current.manual = startSustainedVoice(
+        audio.context,
+        audio.master,
+        note.freq,
+        musicModeRef.current,
+        note.id,
+        pan,
+        false,
+      );
+
+      setActiveScaleNoteId(note.id);
+      setLastPlayedLabel(
+        `Nada Panjang: ${note.name} (${note.notation}, ${Math.round(note.freq)} Hz) · Tahan untuk sustain piano`,
+      );
+    },
+    [ensureMusicAudio, recordActivity],
+  );
+
+  const stopScaleNoteHold = useCallback(() => {
+    const activeVoice = sustainedVoicesRef.current.manual;
+    if (!activeVoice) return;
+    const heldMs = performance.now() - activeVoice.startedAt;
+    const noteId = activeVoice.noteId;
+    activeVoice.release(false);
+    sustainedVoicesRef.current.manual = null;
+
+    if (scaleReleaseTimerRef.current) {
+      window.clearTimeout(scaleReleaseTimerRef.current);
+    }
+    const visualHoldMs = heldMs < 320 ? 650 : 250;
+    scaleReleaseTimerRef.current = window.setTimeout(() => {
+      setActiveScaleNoteId((prev) => (prev === noteId ? null : prev));
+    }, visualHoldMs);
   }, []);
 
   const playScaleNote = useCallback(
@@ -1912,7 +2155,7 @@ export default function Home() {
       }
       scaleReleaseTimerRef.current = window.setTimeout(() => {
         setActiveScaleNoteId((prev) => (prev === note.id ? null : prev));
-      }, 550);
+      }, 950);
     },
     [ensureMusicAudio, recordActivity],
   );
@@ -2111,13 +2354,31 @@ export default function Home() {
 
   const handleHandMusic = useCallback(
     (hands: HandInfo[], now: number) => {
-      if (!musicPlayingRef.current) return;
-      if (hands.length > 0) recordActivity();
+      if (hands.length === 0) {
+        if (
+          sustainedVoicesRef.current.melody ||
+          sustainedVoicesRef.current.bass
+        ) {
+          sustainedVoicesRef.current.melody?.release(false);
+          sustainedVoicesRef.current.bass?.release(false);
+          sustainedVoicesRef.current.melody = null;
+          sustainedVoicesRef.current.bass = null;
+          setActiveScaleNoteId(null);
+        }
+        return;
+      }
+
+      recordActivity();
       const audio = ensureMusicAudio();
       if (!audio) return;
+      if (!musicPlayingRef.current) {
+        musicPlayingRef.current = true;
+        setMusicPlaying(true);
+      }
 
       const mode = musicModeRef.current;
       const newPositions: HandPositions = {};
+      const seenSides = { melody: false, bass: false };
 
       for (const hand of hands) {
         if (hand.score < 0.45) continue;
@@ -2131,49 +2392,15 @@ export default function Home() {
         const stateKey = isBass ? ("bass" as const) : ("melody" as const);
 
         const screenX = 1 - tip.x;
-        const brightness = Math.max(0, Math.min(1, screenX));
         const pan = screenX * 2 - 1;
 
-        // 1. Scale Gesture detection (Do, Re, Mi, Fa, Sol, La, Si, Do')
-        const scaleNoteId = detectScaleNote(hand.landmarks);
-        if (scaleNoteId) {
-          const noteObj = SCALE_NOTES.find((n) => n.id === scaleNoteId);
-          if (noteObj) {
-            const prev = handMusicRef.current[stateKey];
-            const noteChanged = Math.abs(noteObj.freq - prev.freq) > 0.5;
-            const elapsed = now - prev.at;
-
-            if (noteChanged || elapsed > 320) {
-              handMusicRef.current[stateKey] = { freq: noteObj.freq, at: now };
-              playNote(
-                audio.context,
-                audio.master,
-                noteObj.freq,
-                mode,
-                brightness,
-                pan,
-                isBass,
-              );
-              setActiveScaleNoteId(noteObj.id);
-              setGesture(noteObj.name);
-              setGestureScore(hand.score);
-            }
-
-            newPositions[key] = {
-              x: tip.x,
-              y: tip.y,
-              note: noteObj.name,
-              playing: true,
-            };
-            setLastPlayedLabel(
-              `Sensor tangan: ${noteObj.name} (${noteObj.notation}, ${Math.round(noteObj.freq)} Hz) · Gerakan: ${noteObj.gesture}`,
-            );
-            continue;
-          }
-        }
-
-        // 2. Closed Fist: stop/silence
+        // 1. Closed Fist: release sustained piano note cleanly (damper down)
         if (hand.name === "Closed_Fist") {
+          if (sustainedVoicesRef.current[stateKey]) {
+            sustainedVoicesRef.current[stateKey]?.release(false);
+            sustainedVoicesRef.current[stateKey] = null;
+          }
+          handNoteCandidateRef.current[stateKey] = { id: null, frames: 0 };
           setActiveScaleNoteId(null);
           newPositions[key] = {
             x: tip.x,
@@ -2184,59 +2411,67 @@ export default function Home() {
           continue;
         }
 
-        // 3. Fallback continuous matrix position
-        const isPlaying =
-          hand.name === "Pointing_Up" || hand.name === "Open_Palm";
-        if (isPlaying) {
-          const scale = isBass ? bassScale : melodyScale;
-          const note = yToNote(tip.y, scale);
-          const prev = handMusicRef.current[stateKey];
-          const freqChanged = Math.abs(note.freq - prev.freq) > 1;
-          const elapsed = now - prev.at;
-          const isDrum = isDrumLike(mode);
-          const cooldown = isDrum ? 160 : 75;
+        // 2. Scale Gesture detection (Do, Re, Mi, Fa, Sol, La, Si, Do') with Continuous Sustain
+        const scaleNoteId = detectScaleNote(hand.landmarks);
+        if (scaleNoteId) {
+          const noteObj = SCALE_NOTES.find((n) => n.id === scaleNoteId);
+          if (noteObj) {
+            seenSides[stateKey] = true;
+            const currentVoice = sustainedVoicesRef.current[stateKey];
 
-          if (freqChanged && elapsed > cooldown) {
-            handMusicRef.current[stateKey] = { freq: note.freq, at: now };
-
-            if (hand.name === "Open_Palm") {
-              playChord(
-                audio.context,
-                audio.master,
-                note.freq,
-                mode,
-                brightness,
-                pan,
-              );
+            if (currentVoice && currentVoice.noteId === noteObj.id) {
+              // Same gesture held -> sustain continuously like holding a piano key!
+              currentVoice.updatePan(pan);
+              handNoteCandidateRef.current[stateKey] = {
+                id: noteObj.id,
+                frames: 0,
+              };
             } else {
-              playNote(
-                audio.context,
-                audio.master,
-                note.freq,
-                mode,
-                brightness,
-                pan,
-                isBass,
-              );
-            }
-          }
+              // New gesture candidate -> 2-frame debounce when switching notes to prevent camera jitter
+              const cand = handNoteCandidateRef.current[stateKey];
+              const nextFrames = cand.id === noteObj.id ? cand.frames + 1 : 1;
+              handNoteCandidateRef.current[stateKey] = {
+                id: noteObj.id,
+                frames: nextFrames,
+              };
 
-          newPositions[key] = {
-            x: tip.x,
-            y: tip.y,
-            note: note.name,
-            playing: true,
-          };
-          setLastPlayedLabel(
-            `Sensor tangan: ${note.name} (${Math.round(note.freq)} Hz)`,
-          );
-        } else {
-          newPositions[key] = {
-            x: tip.x,
-            y: tip.y,
-            note: "",
-            playing: false,
-          };
+              if (!currentVoice || nextFrames >= 2) {
+                currentVoice?.release(true);
+                sustainedVoicesRef.current[stateKey] = startSustainedVoice(
+                  audio.context,
+                  audio.master,
+                  noteObj.freq,
+                  mode,
+                  noteObj.id,
+                  pan,
+                  isBass,
+                );
+                handMusicRef.current[stateKey] = {
+                  freq: noteObj.freq,
+                  at: now,
+                };
+                setActiveScaleNoteId(noteObj.id);
+                setGesture(noteObj.name);
+                setGestureScore(hand.score);
+              }
+            }
+
+            const activeNote =
+              SCALE_NOTES.find(
+                (n) => n.id === sustainedVoicesRef.current[stateKey]?.noteId,
+              ) ?? noteObj;
+
+            newPositions[key] = {
+              x: tip.x,
+              y: tip.y,
+              note: activeNote.name,
+              playing: true,
+            };
+            setLastPlayedLabel(
+              `Sustain Piano: ${activeNote.name} (${activeNote.notation}, ${Math.round(activeNote.freq)} Hz) · Tahan jari (${activeNote.gesture})`,
+            );
+            continue;
+          }
         }
 
         if (isDrumLike(mode) && palm) {
@@ -2250,6 +2485,18 @@ export default function Home() {
           previousPalmRef.current = { y: palm.y, at: now };
         }
       }
+
+      // Release sustained voices for any hand that stopped showing a note gesture
+      (["melody", "bass"] as const).forEach((side) => {
+        if (!seenSides[side] && sustainedVoicesRef.current[side]) {
+          sustainedVoicesRef.current[side]?.release(false);
+          sustainedVoicesRef.current[side] = null;
+          handNoteCandidateRef.current[side] = { id: null, frames: 0 };
+          if (!seenSides.melody && !seenSides.bass) {
+            setActiveScaleNoteId(null);
+          }
+        }
+      });
 
       setHandPositions(newPositions);
     },
@@ -2270,55 +2517,21 @@ export default function Home() {
       if (name === "Open_Palm") {
         if (!musicPlayingRef.current) {
           startMusic();
-          showToast("Sensor musik aktif. Angkat telunjuk untuk mengatur nada.");
+          showToast("Sensor piano aktif. Tahan pose jari untuk nada panjang!");
         }
-      } else if (name === "Closed_Fist" || name === "Thumb_Down") {
+      } else if (name === "Thumb_Down") {
         if (musicPlayingRef.current) {
           stopMusic();
           showToast("Musik dihentikan.");
         }
-      } else if (name === "Victory") {
-        if (musicPlayingRef.current) {
-          const currentIndex = musicModes.findIndex(
-            (mode) => mode.id === musicModeRef.current,
-          );
-          const nextMode = musicModes[(currentIndex + 1) % musicModes.length];
-          selectMusicMode(nextMode.id);
-          showToast(`Bank instrumen: ${nextMode.name}`);
-        } else {
-          setMood((current) => (current + 1) % 3);
-          showToast("Mode tampilan CRT REYA diganti.");
-        }
       } else if (name === "Thumb_Up") {
-        if (
-          musicPlayingRef.current &&
-          masterGainRef.current &&
-          audioContextRef.current
-        ) {
-          const g = masterGainRef.current;
-          const t = audioContextRef.current.currentTime;
-          g.gain.cancelScheduledValues(t);
-          g.gain.setValueAtTime(0.5, t);
-          g.gain.linearRampToValueAtTime(0.22, t + 2);
-          showToast("Lonjakan volume aktif (Boost).");
-          setMood((m) => (m + 1) % 3);
-        } else {
+        if (!musicPlayingRef.current) {
           startMusic();
-          showToast("Sensor musik diaktifkan.");
+          showToast("Sensor piano diaktifkan.");
         }
-      } else if (name === "ILoveYou") {
-        const audio = ensureMusicAudio();
-        if (audio) {
-          musicPlayingRef.current = true;
-          setMusicPlaying(true);
-          playDropEffect(audio.context, audio.master);
-          showToast("Efek sub-drop dimainkan.");
-        }
-      } else if (name === "Pointing_Up") {
-        if (!musicPlayingRef.current) listenRef.current();
       }
     },
-    [ensureMusicAudio, selectMusicMode, showToast, startMusic, stopMusic],
+    [showToast, startMusic, stopMusic],
   );
 
   const drawHands = useCallback(
@@ -3058,7 +3271,8 @@ export default function Home() {
     setGesture("None");
     setGestureScore(0);
     setHandPositions({});
-  }, []);
+    releaseAllSustainedVoices(false);
+  }, [releaseAllSustainedVoices]);
 
   const startCamera = useCallback(async () => {
     if (cameraOn) {
@@ -3163,6 +3377,7 @@ export default function Home() {
             canvas
               ?.getContext("2d")
               ?.clearRect(0, 0, canvas.width, canvas.height);
+            handleHandMusic([], performance.now());
             setHandPositions({});
           }
 
@@ -3917,8 +4132,25 @@ export default function Home() {
                         "--card-bg": `${note.color}18`,
                       } as React.CSSProperties
                     }
-                    onClick={() => playScaleNote(note)}
-                    aria-label={`Mainkan nada ${note.name}, notasi ${note.notation}, gestur ${note.gesture}`}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      startScaleNoteHold(note);
+                    }}
+                    onPointerUp={stopScaleNoteHold}
+                    onPointerLeave={stopScaleNoteHold}
+                    onPointerCancel={stopScaleNoteHold}
+                    onKeyDown={(e) => {
+                      if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
+                        e.preventDefault();
+                        startScaleNoteHold(note);
+                      }
+                    }}
+                    onKeyUp={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        stopScaleNoteHold();
+                      }
+                    }}
+                    aria-label={`Mainkan nada panjang ${note.name}, notasi ${note.notation}, gestur ${note.gesture}`}
                   >
                     <span className="scale-card-top-badge">{note.name}</span>
                     <div className="scale-card-gesture-visual">
@@ -4024,8 +4256,14 @@ export default function Home() {
                         type="button"
                         className={`scale-flow-pill ${activeScaleNoteId === note.id ? "active" : ""}`}
                         style={{ backgroundColor: note.color }}
-                        onClick={() => playScaleNote(note)}
-                        title={`Klik untuk dengar ${note.name}`}
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          startScaleNoteHold(note);
+                        }}
+                        onPointerUp={stopScaleNoteHold}
+                        onPointerLeave={stopScaleNoteHold}
+                        onPointerCancel={stopScaleNoteHold}
+                        title={`Tekan & tahan untuk nada panjang ${note.name}`}
                       >
                         {note.name}
                       </button>
