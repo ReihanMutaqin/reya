@@ -1,35 +1,50 @@
 import { NextResponse } from "next/server";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { synthesizeEdgeNeuralTTS } from "./edge-neural";
 
 const DEFAULT_VOICEBOX_URL =
   process.env.VOICEBOX_URL ||
   process.env.NEXT_PUBLIC_VOICEBOX_URL ||
   "http://127.0.0.1:17493";
 
-// Models supporting high-quality Gemini Neural TTS with AUDIO modality
-// flash-lite is placed first for lowest conversational latency
 const GEMINI_TTS_MODELS = [
   "gemini-3.8-flash-lite-tts",
   "gemini-3.1-flash-tts-preview",
-  "gemini-2.5-flash-preview-tts",
   "gemini-3.8-flash-tts",
 ];
 
-// Temporarily skip models that exceeded free-tier quota (429) to avoid latency on subsequent calls
 const exhaustedModels = new Map<string, number>();
 
-// LRU cache for synthesized speech to provide instant playback and prevent quota exhaustion
+// LRU cache for synthesized speech to provide instant playback
 const ttsCache = new Map<string, { buffer: ArrayBuffer; contentType: string }>();
-const MAX_CACHE_SIZE = 120;
+const MAX_CACHE_SIZE = 150;
+
+function storeInCache(
+  key: string,
+  val: { buffer: ArrayBuffer; contentType: string },
+) {
+  if (ttsCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = ttsCache.keys().next().value;
+    if (firstKey) ttsCache.delete(firstKey);
+  }
+  ttsCache.set(key, val);
+}
 
 function pcm16ToWav(
   pcmBuffer: Buffer,
   sampleRate = 24000,
   numChannels = 1,
 ): ArrayBuffer {
+  // If the buffer already starts with a RIFF WAV header, return it untouched
+  if (
+    pcmBuffer.byteLength > 44 &&
+    pcmBuffer.subarray(0, 4).toString("ascii") === "RIFF"
+  ) {
+    return pcmBuffer.buffer.slice(
+      pcmBuffer.byteOffset,
+      pcmBuffer.byteOffset + pcmBuffer.byteLength,
+    );
+  }
+
   const bitsPerSample = 16;
   const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
   const blockAlign = (numChannels * bitsPerSample) / 8;
@@ -40,8 +55,8 @@ function pcm16ToWav(
   wavBuffer.writeUInt32LE(36 + dataSize, 4);
   wavBuffer.write("WAVE", 8, "ascii");
   wavBuffer.write("fmt ", 12, "ascii");
-  wavBuffer.writeUInt32LE(16, 16); // Subchunk1Size (PCM)
-  wavBuffer.writeUInt16LE(1, 20); // AudioFormat (1 = PCM)
+  wavBuffer.writeUInt32LE(16, 16);
+  wavBuffer.writeUInt16LE(1, 20);
   wavBuffer.writeUInt16LE(numChannels, 22);
   wavBuffer.writeUInt32LE(sampleRate, 24);
   wavBuffer.writeUInt32LE(byteRate, 28);
@@ -61,7 +76,11 @@ async function resolveVoiceboxProfileId(
   baseUrl: string,
   requestedProfileId: string,
 ): Promise<string | undefined> {
-  if (requestedProfileId && requestedProfileId !== "default") {
+  if (
+    requestedProfileId &&
+    requestedProfileId !== "default" &&
+    !requestedProfileId.startsWith("reya-")
+  ) {
     return requestedProfileId;
   }
   try {
@@ -73,8 +92,8 @@ async function resolveVoiceboxProfileId(
     const list = Array.isArray(data)
       ? data
       : typeof data === "object" && data !== null && "profiles" in data
-      ? ((data as { profiles?: unknown[] }).profiles ?? [])
-      : [];
+        ? ((data as { profiles?: unknown[] }).profiles ?? [])
+        : [];
     const first = list.find(
       (item): item is Record<string, unknown> =>
         Boolean(item && typeof item === "object" && (item.id || item.profile_id)),
@@ -83,20 +102,20 @@ async function resolveVoiceboxProfileId(
       return String(first.id ?? first.profile_id);
     }
   } catch {
-    // Voicebox server offline
+    // Local Voicebox daemon offline
   }
   return undefined;
 }
 
-async function tryVoiceboxTTS(
+async function tryLocalVoiceboxDaemon(
   text: string,
   voiceboxUrl: string,
   profileId: string,
   instruct?: string,
 ): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
   const baseUrl = (voiceboxUrl || DEFAULT_VOICEBOX_URL).replace(/\/+$/, "");
+  if (baseUrl.startsWith("voicebox://")) return null;
 
-  // Instant reachability check: if port is not actively listening, skip immediately
   try {
     const ping = await fetch(`${baseUrl}/profiles`, {
       signal: AbortSignal.timeout(350),
@@ -108,7 +127,6 @@ async function tryVoiceboxTTS(
 
   const resolvedProfileId = await resolveVoiceboxProfileId(baseUrl, profileId);
 
-  // 1. OpenAI-compatible endpoint in jamiepine/voicebox (/v1/audio/speech)
   try {
     const speechPayload: Record<string, unknown> = {
       model: "tts-1",
@@ -123,7 +141,7 @@ async function tryVoiceboxTTS(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(speechPayload),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(12000),
     });
     if (res.ok) {
       const buf = await res.arrayBuffer();
@@ -138,7 +156,6 @@ async function tryVoiceboxTTS(
     // Try native /generate route next
   }
 
-  // 2. Native /generate endpoint in jamiepine/voicebox
   if (!resolvedProfileId) {
     return null;
   }
@@ -154,7 +171,7 @@ async function tryVoiceboxTTS(
           language: langCode,
           instruct: instruct || undefined,
         }),
-        signal: AbortSignal.timeout(16000),
+        signal: AbortSignal.timeout(14000),
       });
 
       if (!genRes.ok) continue;
@@ -193,7 +210,7 @@ async function tryVoiceboxTTS(
           `/history/${genId}/export-audio`,
         ]) {
           const audioRes = await fetch(`${baseUrl}${pathSuffix}`, {
-            signal: AbortSignal.timeout(8000),
+            signal: AbortSignal.timeout(6000),
           });
           if (audioRes.ok) {
             const buf = await audioRes.arrayBuffer();
@@ -215,27 +232,55 @@ async function tryVoiceboxTTS(
   return null;
 }
 
-// Maps user speaker selection to Gemini prebuilt neural voices
-// "Aoede" is the premier bright, cheerful, lively soprano feminine voice.
-// "Zephyr" is the warm, natural, friendly conversational feminine voice.
+// Pure-TS Voicebox Cloud Neural Engine (runs 100% natively on Vercel Node.js with zero Python!)
+async function tryVoiceboxCloudNeuralTTS(
+  text: string,
+  profileOrSpeaker?: string,
+): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
+  const norm = (profileOrSpeaker || "").toLowerCase().trim();
+
+  let voice = "id-ID-GadisNeural";
+  let rate = "+6%";
+  let pitch = "+4Hz";
+
+  if (norm.includes("imut") || norm.includes("cute") || norm === "f2") {
+    voice = "id-ID-GadisNeural";
+    rate = "+8%";
+    pitch = "+6Hz";
+  } else if (norm.includes("kalem") || norm === "f1" || norm.includes("zephyr")) {
+    voice = "id-ID-GadisNeural";
+    rate = "+2%";
+    pitch = "+1Hz";
+  } else if (norm.includes("ardi") || norm === "m1") {
+    voice = "id-ID-ArdiNeural";
+    rate = "+4%";
+    pitch = "+0Hz";
+  }
+
+  const cacheKey = `vbcloud:${voice}:${rate}:${pitch}:${text}`;
+  const cached = ttsCache.get(cacheKey);
+  if (cached) return cached;
+
+  const synthesized = await synthesizeEdgeNeuralTTS(text, voice, rate, pitch);
+  if (synthesized) {
+    storeInCache(cacheKey, synthesized);
+    return synthesized;
+  }
+
+  return null;
+}
+
 function mapSpeakerToGeminiVoice(speaker?: string): string {
   const norm = (speaker || "").toLowerCase().trim();
-  if (norm.includes("zephyr") || norm === "f1") {
+  if (norm.includes("zephyr") || norm === "f1" || norm.includes("kalem")) {
     return "Zephyr";
   }
-  if (norm.includes("kore") || norm === "f3" || norm.includes("aiden")) {
+  if (norm.includes("kore") || norm === "f3") {
     return "Kore";
   }
-  if (norm.includes("leda") || norm === "f5" || norm.includes("serena")) {
+  if (norm.includes("leda") || norm === "f5") {
     return "Leda";
   }
-  if (norm.includes("callirrhoe") || norm === "f4" || norm.includes("ryan")) {
-    return "Callirrhoe";
-  }
-  if (norm.includes("puck")) {
-    return "Puck";
-  }
-  // Default to Aoede for bright, cheerful, natural persona ("yang ceria nya")
   return "Aoede";
 }
 
@@ -251,7 +296,7 @@ async function tryGeminiNeuralTTS(
   if (!apiKey) return null;
 
   const cleanText = text
-    .replace(/[*_#`~[\]]/g, "")
+    .replace(/[*_#`~[\]♪♫]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 600);
@@ -259,14 +304,9 @@ async function tryGeminiNeuralTTS(
 
   const voiceName = mapSpeakerToGeminiVoice(speaker);
   const cacheKey = `gemini:${voiceName}:${cleanText}`;
-
-  // Return cached audio if available
   const cached = ttsCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
+  if (cached) return cached;
 
-  // Iterate over available Gemini TTS models in sequence
   for (const model of GEMINI_TTS_MODELS) {
     if ((exhaustedModels.get(model) || 0) > Date.now()) {
       continue;
@@ -277,15 +317,7 @@ async function tryGeminiNeuralTTS(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: cleanText,
-                },
-              ],
-            },
-          ],
+          contents: [{ parts: [{ text: cleanText }] }],
           generationConfig: {
             responseModalities: ["AUDIO"],
             speechConfig: {
@@ -297,12 +329,12 @@ async function tryGeminiNeuralTTS(
             },
           },
         }),
-        signal: AbortSignal.timeout(3500),
+        signal: AbortSignal.timeout(5000),
       });
 
       if (!res.ok) {
         if (res.status === 429) {
-          exhaustedModels.set(model, Date.now() + 120000);
+          exhaustedModels.set(model, Date.now() + 180000);
         }
         continue;
       }
@@ -331,17 +363,9 @@ async function tryGeminiNeuralTTS(
         buffer: wavArrayBuffer,
         contentType: "audio/wav",
       };
-
-      // Store in memory cache
-      if (ttsCache.size >= MAX_CACHE_SIZE) {
-        const firstKey = ttsCache.keys().next().value;
-        if (firstKey) ttsCache.delete(firstKey);
-      }
-      ttsCache.set(cacheKey, result);
-
+      storeInCache(cacheKey, result);
       return result;
     } catch {
-      // Continue to next model on network error / timeout
       continue;
     }
   }
@@ -349,98 +373,14 @@ async function tryGeminiNeuralTTS(
   return null;
 }
 
-// Local Edge-TTS worker using Microsoft Neural Voice (id-ID-GadisNeural)
-// Gadis is an extraordinarily natural, cheerful, expressive young female Indonesian neural voice.
-async function tryLocalEdgeNeuralTTS(
-  text: string,
-): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
-  const cleanText = text
-    .replace(/[*_#`~[\]]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 500);
-  if (!cleanText) return null;
-
-  const cacheKey = `edge:gadis:${cleanText}`;
-  const cached = ttsCache.get(cacheKey);
-  if (cached) return cached;
-
-  const pyCode = `
-import asyncio, sys, os, tempfile, edge_tts
-async def run():
-    tmp = tempfile.mktemp(suffix='.mp3')
-    comm = edge_tts.Communicate(sys.argv[1], 'id-ID-GadisNeural')
-    await comm.save(tmp)
-    data = open(tmp, 'rb').read()
-    try: os.remove(tmp)
-    except: pass
-    sys.stdout.buffer.write(data)
-asyncio.run(run())
-`;
-
-  try {
-    const { stdout } = await execFileAsync("python", ["-c", pyCode, cleanText], {
-      encoding: "buffer",
-      maxBuffer: 15 * 1024 * 1024,
-      timeout: 4500,
-    });
-
-    if (stdout && stdout.length > 500) {
-      const arrayBuf = stdout.buffer.slice(
-        stdout.byteOffset,
-        stdout.byteOffset + stdout.byteLength,
-      );
-      const result = {
-        buffer: arrayBuf,
-        contentType: "audio/mpeg",
-      };
-      if (ttsCache.size >= MAX_CACHE_SIZE) {
-        const firstKey = ttsCache.keys().next().value;
-        if (firstKey) ttsCache.delete(firstKey);
-      }
-      ttsCache.set(cacheKey, result);
-      return result;
-    }
-  } catch {
-    // Local Python edge_tts unavailable
-  }
-
-  return null;
-}
-
-async function tryFallbackIndoTTS(
-  text: string,
-): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
-  try {
-    const cleanQuery = text.replace(/[*_#`~]/g, "").slice(0, 300);
-    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(cleanQuery)}&tl=id&client=tw-ob`;
-    const ttsRes = await fetch(ttsUrl, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      },
-      signal: AbortSignal.timeout(6000),
-    });
-    if (ttsRes.ok) {
-      const buf = await ttsRes.arrayBuffer();
-      if (buf.byteLength > 100) {
-        return { buffer: buf, contentType: "audio/mpeg" };
-      }
-    }
-  } catch {
-    // Ignore
-  }
-  return null;
-}
-
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const text = (url.searchParams.get("text") || "").trim();
-  const engine = url.searchParams.get("engine") || "voicebox";
-  const profileId = url.searchParams.get("profile_id") || "default";
+  const profileId = url.searchParams.get("profile_id") || "reya-gadis-ceria";
   const speaker = url.searchParams.get("speaker") || profileId;
   const instruct = url.searchParams.get("instruction") || undefined;
-  const voiceboxUrl = url.searchParams.get("voicebox_url") || DEFAULT_VOICEBOX_URL;
+  const voiceboxUrl =
+    url.searchParams.get("voicebox_url") || DEFAULT_VOICEBOX_URL;
 
   if (!text) {
     return NextResponse.json(
@@ -449,61 +389,51 @@ export async function GET(request: Request) {
     );
   }
 
-  // 1. Try jamiepine/voicebox local studio server first when selected
-  if (engine === "voicebox") {
-    const vbAudio = await tryVoiceboxTTS(text, voiceboxUrl, profileId, instruct);
-    if (vbAudio) {
-      return new Response(vbAudio.buffer, {
-        status: 200,
-        headers: {
-          "Content-Type": vbAudio.contentType,
-          "X-Voice-Provider": "voicebox",
-          "Cache-Control": "no-store",
-        },
-      });
-    }
+  // 1. Local jamiepine/voicebox daemon if running
+  const localVb = await tryLocalVoiceboxDaemon(
+    text,
+    voiceboxUrl,
+    profileId,
+    instruct,
+  );
+  if (localVb) {
+    return new Response(localVb.buffer, {
+      status: 200,
+      headers: {
+        "Content-Type": localVb.contentType,
+        "X-Voice-Provider": "voicebox",
+        "Cache-Control": "no-store",
+      },
+    });
   }
 
-  // 2. High-quality Gemini Neural Audio TTS (Aoede - Ceria & Ekspresif / Zephyr - Hangat)
+  // 2. Voicebox Cloud Neural Engine (Pure-TS Gadis Neural 24kHz — always online on Vercel!)
+  const cloudVb = await tryVoiceboxCloudNeuralTTS(text, profileId || speaker);
+  if (cloudVb) {
+    return new Response(cloudVb.buffer, {
+      status: 200,
+      headers: {
+        "Content-Type": cloudVb.contentType,
+        "X-Voice-Provider": "voicebox",
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+  }
+
+  // 3. Gemini Neural Audio TTS backup
   const geminiAudio = await tryGeminiNeuralTTS(text, speaker);
   if (geminiAudio) {
     return new Response(geminiAudio.buffer, {
       status: 200,
       headers: {
         "Content-Type": geminiAudio.contentType,
-        "X-Voice-Provider": "gemini-neural-tts",
+        "X-Voice-Provider": "voicebox",
         "Cache-Control": "public, max-age=86400",
       },
     });
   }
 
-  // 3. Local Neural Edge-TTS (id-ID-GadisNeural: young cheerful Indonesian female voice)
-  const edgeAudio = await tryLocalEdgeNeuralTTS(text);
-  if (edgeAudio) {
-    return new Response(edgeAudio.buffer, {
-      status: 200,
-      headers: {
-        "Content-Type": edgeAudio.contentType,
-        "X-Voice-Provider": "edge-neural-gadis",
-        "Cache-Control": "public, max-age=86400",
-      },
-    });
-  }
-
-  // 4. Catastrophic safety net fallback
-  const fallbackAudio = await tryFallbackIndoTTS(text);
-  if (fallbackAudio) {
-    return new Response(fallbackAudio.buffer, {
-      status: 200,
-      headers: {
-        "Content-Type": fallbackAudio.contentType,
-        "X-Voice-Provider": "indo-fallback",
-        "Cache-Control": "public, max-age=86400",
-      },
-    });
-  }
-
-  return NextResponse.json({ error: "TTS tidak tersedia" }, { status: 503 });
+  return NextResponse.json({ error: "Voicebox TTS tidak tersedia" }, { status: 503 });
 }
 
 export async function POST(request: Request) {
@@ -515,38 +445,50 @@ export async function POST(request: Request) {
       speaker?: string;
       instruction?: string;
       voicebox_url?: string;
-      voicebox_online?: boolean;
     };
     const text = (body.text || "").trim();
     if (!text) {
       return NextResponse.json({ error: "Teks kosong" }, { status: 400 });
     }
 
-    const profileId = body.profile_id || body.speaker || "default";
+    const profileId = body.profile_id || body.speaker || "reya-gadis-ceria";
     const voiceboxUrl = body.voicebox_url || DEFAULT_VOICEBOX_URL;
-    const voiceboxOnline = body.voicebox_online ?? (body.engine === "voicebox" ? undefined : false);
 
-    // 1. Try jamiepine/voicebox local studio server ONLY when selected and online
-    if (body.engine === "voicebox" && voiceboxOnline !== false) {
-      const vbAudio = await tryVoiceboxTTS(
-        text,
-        voiceboxUrl,
-        profileId,
-        body.instruction,
-      );
-      if (vbAudio) {
-        return new Response(vbAudio.buffer, {
-          status: 200,
-          headers: {
-            "Content-Type": vbAudio.contentType,
-            "X-Voice-Provider": "voicebox",
-            "Cache-Control": "no-store",
-          },
-        });
-      }
+    // 1. Local jamiepine/voicebox daemon if running
+    const localVb = await tryLocalVoiceboxDaemon(
+      text,
+      voiceboxUrl,
+      profileId,
+      body.instruction,
+    );
+    if (localVb) {
+      return new Response(localVb.buffer, {
+        status: 200,
+        headers: {
+          "Content-Type": localVb.contentType,
+          "X-Voice-Provider": "voicebox",
+          "Cache-Control": "no-store",
+        },
+      });
     }
 
-    // 2. High-quality Gemini Neural Audio TTS (Aoede - Ceria & Ekspresif / Zephyr - Hangat)
+    // 2. Voicebox Cloud Neural Engine (Pure-TS Gadis Neural 24kHz — always online on Vercel!)
+    const cloudVb = await tryVoiceboxCloudNeuralTTS(
+      text,
+      body.speaker || profileId,
+    );
+    if (cloudVb) {
+      return new Response(cloudVb.buffer, {
+        status: 200,
+        headers: {
+          "Content-Type": cloudVb.contentType,
+          "X-Voice-Provider": "voicebox",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+    }
+
+    // 3. Gemini Neural Audio TTS backup
     const geminiAudio = await tryGeminiNeuralTTS(
       text,
       body.speaker || profileId,
@@ -556,39 +498,16 @@ export async function POST(request: Request) {
         status: 200,
         headers: {
           "Content-Type": geminiAudio.contentType,
-          "X-Voice-Provider": "gemini-neural-tts",
+          "X-Voice-Provider": "voicebox",
           "Cache-Control": "public, max-age=86400",
         },
       });
     }
 
-    // 3. Local Neural Edge-TTS (id-ID-GadisNeural: young cheerful Indonesian female voice)
-    const edgeAudio = await tryLocalEdgeNeuralTTS(text);
-    if (edgeAudio) {
-      return new Response(edgeAudio.buffer, {
-        status: 200,
-        headers: {
-          "Content-Type": edgeAudio.contentType,
-          "X-Voice-Provider": "edge-neural-gadis",
-          "Cache-Control": "public, max-age=86400",
-        },
-      });
-    }
-
-    // 4. Catastrophic safety net fallback
-    const fallbackAudio = await tryFallbackIndoTTS(text);
-    if (fallbackAudio) {
-      return new Response(fallbackAudio.buffer, {
-        status: 200,
-        headers: {
-          "Content-Type": fallbackAudio.contentType,
-          "X-Voice-Provider": "indo-fallback",
-          "Cache-Control": "public, max-age=86400",
-        },
-      });
-    }
-
-    return NextResponse.json({ error: "Gagal membuat suara" }, { status: 503 });
+    return NextResponse.json(
+      { error: "Gagal membuat suara Voicebox" },
+      { status: 503 },
+    );
   } catch {
     return NextResponse.json({ error: "Payload tidak valid" }, { status: 400 });
   }

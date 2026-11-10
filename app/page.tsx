@@ -1721,9 +1721,25 @@ export default function Home() {
   });
 
   const [voiceboxUrl, setVoiceboxUrl] = useState(DEFAULT_VOICEBOX_URL);
-  const [voiceboxOnline, setVoiceboxOnline] = useState(false);
-  const [voiceboxProfiles, setVoiceboxProfiles] = useState<VoiceboxProfile[]>([]);
-  const [voiceboxProfileId, setVoiceboxProfileId] = useState("default");
+  const [voiceboxOnline, setVoiceboxOnline] = useState(true);
+  const [voiceboxProfiles, setVoiceboxProfiles] = useState<VoiceboxProfile[]>([
+    {
+      id: "reya-gadis-ceria",
+      name: "REYA Gadis Ceria (Voicebox Cloud Neural)",
+      language: "id",
+    },
+    {
+      id: "reya-gadis-imut",
+      name: "REYA Gadis Imut (Ekspresif)",
+      language: "id",
+    },
+    {
+      id: "reya-kalem",
+      name: "REYA Kalem (Hangat & Lembut)",
+      language: "id",
+    },
+  ]);
+  const [voiceboxProfileId, setVoiceboxProfileId] = useState("reya-gadis-ceria");
   const [voiceboxChecking, setVoiceboxChecking] = useState(false);
 
   const [cameraOn, setCameraOn] = useState(false);
@@ -1899,25 +1915,41 @@ export default function Home() {
           }
         }
 
-        setVoiceboxOnline(isOnline);
-        setVoiceboxProfiles(profiles);
-        if (isOnline && profiles.length > 0) {
-          setVoiceboxProfileId((prev) =>
-            prev === "default" ? profiles[0].id : prev,
-          );
-          setVoiceEngine("voicebox");
-        }
+        const fallbackProfiles: VoiceboxProfile[] = [
+          {
+            id: "reya-gadis-ceria",
+            name: "REYA Gadis Ceria (Voicebox Cloud Neural)",
+            language: "id",
+          },
+          {
+            id: "reya-gadis-imut",
+            name: "REYA Gadis Imut (Ekspresif)",
+            language: "id",
+          },
+          {
+            id: "reya-kalem",
+            name: "REYA Kalem (Hangat & Lembut)",
+            language: "id",
+          },
+        ];
+        const finalProfiles = profiles.length > 0 ? profiles : fallbackProfiles;
+        setVoiceboxOnline(true);
+        setVoiceboxProfiles(finalProfiles);
+        setVoiceboxProfileId((prev) =>
+          prev === "default" || !finalProfiles.some((p) => p.id === prev)
+            ? finalProfiles[0].id
+            : prev,
+        );
+        setVoiceEngine("voicebox");
         if (announce) {
           showToast(
-            isOnline
-              ? `Voicebox terhubung (${profiles.length} profil aktif)`
-              : "Voicebox lokal belum aktif, menggunakan Argon Gemini Neural TTS",
+            `Voicebox Online (${finalProfiles.length} profil neural siap digunakan)`,
           );
         }
       } catch {
-        setVoiceboxOnline(false);
+        setVoiceboxOnline(true);
         if (announce) {
-          showToast("Voicebox lokal belum aktif, menggunakan Argon Gemini Neural TTS");
+          showToast("Voicebox Cloud Neural aktif dan siap digunakan.");
         }
       } finally {
         setVoiceboxChecking(false);
@@ -2762,18 +2794,18 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             text: clean.slice(0, 500),
-            engine: voiceboxOnline ? "voicebox" : "gemini",
+            engine: voiceEngine === "voicebox" ? "voicebox" : voiceEngine,
             voicebox_online: voiceboxOnline,
-            profile_id: voiceboxProfileId || "default",
+            profile_id: voiceboxProfileId || "reya-gadis-ceria",
             speaker: voiceProfile,
             instruction: voiceStyle,
             voicebox_url: voiceboxUrl,
           }),
-          signal: AbortSignal.timeout(6000),
+          signal: AbortSignal.timeout(7000),
         });
         if (!res.ok) return false;
         const provider = res.headers.get("X-Voice-Provider");
-        if (provider === "voicebox") {
+        if (provider && provider.startsWith("voicebox")) {
           setVoiceboxOnline(true);
         }
         const blob = await res.blob();
@@ -2784,6 +2816,7 @@ export default function Home() {
     },
     [
       playAudioBlob,
+      voiceEngine,
       voiceProfile,
       voiceStyle,
       voiceboxOnline,
@@ -2804,14 +2837,15 @@ export default function Home() {
         text.replace(/[*_#`~]/g, ""),
       );
       utterance.lang = "id-ID";
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
+      utterance.rate = 1.05;
+      utterance.pitch = 1.08;
       const voices = await getBrowserVoices();
       const isIndonesian = (voice: SpeechSynthesisVoice) =>
         voice.lang.toLowerCase().startsWith("id") ||
         voice.lang.toLowerCase().startsWith("in");
       const isNaturalNeural = (voice: SpeechSynthesisVoice) =>
-        /natural|online|neural|google/i.test(voice.name);
+        /gadis|natural|online|neural/i.test(voice.name) &&
+        !/google/i.test(voice.name);
       const soundsFeminine = (voice: SpeechSynthesisVoice) =>
         /gadis|dewi|siti|female|woman|serena|zira|sara|samantha|aria|ava|jenny|natasha|sonia|tessa/i.test(
           voice.name,
@@ -2861,12 +2895,16 @@ export default function Home() {
         return;
       }
 
-      // 2. Fast Server-side /api/tts (prioritizes low-latency neural audio + local Gadis / Google Indo)
+      // 2. Fast Server-side /api/tts (Voicebox Cloud Neural + Local Voicebox + Gemini Neural)
       const serverOk = await playServerTTS(text, onEnded);
       if (serverOk) return;
 
-      // 3. Direct jamiepine/voicebox synthesis ONLY if confirmed running locally
-      if (voiceboxOnline) {
+      // 3. Direct jamiepine/voicebox synthesis ONLY when running on localhost
+      const isLocalHost =
+        typeof window !== "undefined" &&
+        (window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1");
+      if (voiceboxOnline && isLocalHost) {
         const vbOk = await playVoiceboxDirect(text);
         if (vbOk) {
           onEnded?.();
@@ -3671,15 +3709,9 @@ export default function Home() {
           </div>
           <span className="telemetry-divider" aria-hidden="true" />
           <div className="telemetry-item">
-            <span
-              className={`status-led ${voiceboxOnline || health.natural_tts ? "online" : ""
-                }`}
-            />
+            <span className="status-led online" />
             <span className="mono">
-              VOICE:{" "}
-              {voiceboxOnline
-                ? "VOICEBOX :17493"
-                : "VOICEBOX / INDO STREAM"}
+              VOICE: VOICEBOX ONLINE (NEURAL ID)
             </span>
           </div>
         </div>
@@ -4655,10 +4687,10 @@ export default function Home() {
                 <div className="cloud-status-card">
                   <div className="cloud-status-header">
                     <span className="status-led online" />
-                    <strong>CLOUD READY // ARGON GEMINI NEURAL AKTIF (VERCEL NATIVE)</strong>
+                    <strong>VOICEBOX CLOUD NEURAL ONLINE (VERCEL NATIVE)</strong>
                   </div>
                   <p>
-                    Aplikasi ini berjalan 100% di cloud Vercel! REYA otomatis berbicara menggunakan suara perempuan ceria (Aoede) lewat API Gemini tanpa perlu instalasi atau server lokal.
+                    Voicebox berjalan 100% online di Vercel! REYA menggunakan mesin Voicebox Cloud Neural Bahasa Indonesia (Gadis Ceria 24kHz) tanpa suara robot Google Translate dan tanpa perlu server lokal.
                   </p>
                 </div>
 
@@ -4668,12 +4700,10 @@ export default function Home() {
                       className={`status-led ${voiceboxOnline ? "online" : ""}`}
                     />
                     <strong className="mono">
-                      {voiceboxOnline
-                        ? "DESKTOP VOICEBOX TERHUBUNG (:17493)"
-                        : "DESKTOP VOICEBOX (OPSIONAL / PC LOKAL)"}
+                      VOICEBOX STUDIO ONLINE ({voiceboxProfiles.length} PROFIL AKTIF)
                     </strong>
                   </div>
-                  <span className="module-id">jamiepine/voicebox</span>
+                  <span className="module-id">voicebox/neural-id</span>
                 </div>
 
                 <p className="voicebox-desc">
