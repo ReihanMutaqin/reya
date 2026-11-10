@@ -1236,7 +1236,81 @@ function RobotCRTUnit({
   const [idleSeconds, setIdleSeconds] = useState(0);
   const [blinking, setBlinking] = useState(false);
   const [poked, setPoked] = useState(false);
+  const [gaze, setGaze] = useState({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
   const lastActiveRef = useRef(lastActivity);
+  const screenRef = useRef<HTMLDivElement>(null);
+
+  let idleState: "active" | "curious" | "yawn" | "sleep" = "active";
+  if (poked) {
+    idleState = "active";
+  } else if (speaking || listening || thinking) {
+    idleState = "active";
+  } else if (idleSeconds >= 28) {
+    idleState = "sleep";
+  } else if (idleSeconds >= 14) {
+    idleState = "yawn";
+  } else if (idleSeconds >= 7) {
+    idleState = "curious";
+  }
+
+  useEffect(() => {
+    let resetTimer: number | null = null;
+
+    const handlePointerMove = (e: MouseEvent | PointerEvent) => {
+      if (idleState === "sleep") {
+        setGaze({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
+        return;
+      }
+
+      const screenEl = screenRef.current;
+      if (!screenEl) return;
+      const rect = screenEl.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+
+      const dx = e.clientX - centerX;
+      const dy = e.clientY - centerY;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < 4) {
+        setGaze({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
+        return;
+      }
+
+      const angle = Math.atan2(dy, dx);
+      const maxViewportDist = Math.max(window.innerWidth, window.innerHeight) * 0.55;
+      const intensity = Math.min(dist / maxViewportDist, 1);
+      const power = Math.pow(intensity, 0.72);
+
+      const maxEyeX = 6.5;
+      const maxEyeY = 4.8;
+      const maxPupilX = 4.5;
+      const maxPupilY = 3.8;
+
+      const eyeX = Math.cos(angle) * power * maxEyeX;
+      const eyeY = Math.sin(angle) * power * maxEyeY;
+      const pupilX = Math.cos(angle) * power * maxPupilX;
+      const pupilY = Math.sin(angle) * power * maxPupilY;
+
+      setGaze({
+        eyeX: Math.round(eyeX * 10) / 10,
+        eyeY: Math.round(eyeY * 10) / 10,
+        pupilX: Math.round(pupilX * 10) / 10,
+        pupilY: Math.round(pupilY * 10) / 10,
+      });
+
+      if (resetTimer) window.clearTimeout(resetTimer);
+      resetTimer = window.setTimeout(() => {
+        setGaze({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
+      }, 4000);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      if (resetTimer) window.clearTimeout(resetTimer);
+    };
+  }, [idleState]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1269,19 +1343,6 @@ function RobotCRTUnit({
     onPoke?.();
     window.setTimeout(() => setPoked(false), 2400);
   };
-
-  let idleState: "active" | "curious" | "yawn" | "sleep" = "active";
-  if (poked) {
-    idleState = "active";
-  } else if (speaking || listening || thinking) {
-    idleState = "active";
-  } else if (idleSeconds >= 28) {
-    idleState = "sleep";
-  } else if (idleSeconds >= 14) {
-    idleState = "yawn";
-  } else if (idleSeconds >= 7) {
-    idleState = "curious";
-  }
 
   let statusLabel = "STBY // REYA SIAP";
   let thoughtBubble = "";
@@ -1316,6 +1377,7 @@ function RobotCRTUnit({
       } ${idleState === "sleep" ? "is-sleeping" : "is-breathing"}`}
     >
       <div
+        ref={screenRef}
         className="crt-screen"
         onClick={handleScreenClick}
         title="Klik layar CRT untuk menyapa atau membangunkan REYA!"
@@ -1354,9 +1416,30 @@ function RobotCRTUnit({
           className={`crt-eyes eyes-${idleState} ${
             blinking ? "is-blinking" : ""
           } ${poked ? "eyes-poked is-poked" : ""}`}
+          style={{
+            transform: `translate(${gaze.eyeX}px, ${gaze.eyeY}px)${
+              idleState === "curious" ? " rotate(-3deg)" : ""
+            }`,
+          }}
         >
-          <div className="crt-eye left-eye" />
-          <div className="crt-eye right-eye" />
+          <div className="crt-eye left-eye">
+            <span
+              className="crt-pupil"
+              style={{
+                transform: `translate(${gaze.pupilX}px, ${gaze.pupilY}px)`,
+              }}
+              aria-hidden="true"
+            />
+          </div>
+          <div className="crt-eye right-eye">
+            <span
+              className="crt-pupil"
+              style={{
+                transform: `translate(${gaze.pupilX}px, ${gaze.pupilY}px)`,
+              }}
+              aria-hidden="true"
+            />
+          </div>
         </div>
 
         <div

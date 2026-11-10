@@ -486,6 +486,7 @@ button {
   position: relative;
   transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   box-shadow: 0 0 12px rgba(232, 244, 122, 0.35);
+  overflow: hidden;
 }
 
 .mood-1 .crt-eye {
@@ -496,6 +497,23 @@ button {
 .mood-2 .crt-eye {
   background: var(--crt-secondary);
   box-shadow: 0 0 12px rgba(104, 232, 165, 0.35);
+}
+
+.crt-pupil {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 9px;
+  height: 11px;
+  border-radius: 3px;
+  background: #161A18;
+  transition: transform 0.08s ease-out;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.crt-eye:has(.crt-pupil)::after {
+  display: none;
 }
 
 .crt-eye::after {
@@ -519,8 +537,9 @@ button {
   box-shadow: 0 0 12px rgba(155, 163, 255, 0.7);
 }
 
+.eyes-sleep .crt-pupil,
 .eyes-sleep .crt-eye::after {
-  display: none;
+  display: none !important;
 }
 
 /* Yawning Eyes (> <) */
@@ -532,6 +551,7 @@ button {
   transform: scale(0.94);
 }
 
+.eyes-yawn .crt-pupil,
 .eyes-yawn .crt-eye::after {
   top: 3px;
   left: 5px;
@@ -554,6 +574,7 @@ button {
   box-shadow: 0 0 18px rgba(255, 255, 255, 0.9);
 }
 
+.eyes-poked .crt-pupil,
 .eyes-poked .crt-eye::after {
   top: 10px;
   left: 10px;
