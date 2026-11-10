@@ -1241,6 +1241,321 @@ button {
   }
 }
 
+/* ==========================================================================
+   TANGGA NADA & PEMETAAN GERAKAN TANGAN (DO RE MI FA SOL LA SI DO')
+   Tactile Hardware & Neon Glow styling matching the reference spec
+   ========================================================================== */
+
+.scale-deck-frame {
+  background: var(--bg-well);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 14px;
+  padding: clamp(14px, 2.5vw, 24px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: var(--shadow-key);
+  margin-top: 16px;
+}
+
+.scale-deck-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.scale-deck-deco {
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.85;
+}
+
+.scale-deck-title-wrap {
+  flex: 1;
+}
+
+.scale-deck-title-wrap h3 {
+  margin: 0;
+  font-size: clamp(18px, 2.2vw, 24px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.scale-deck-subtitle {
+  margin: 6px 0 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: clamp(14px, 1.8vw, 19px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  background: linear-gradient(90deg, #10b981, #f59e0b, #06b6d4, #3b82f6, #a855f7, #ec4899);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.scale-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 1080px) {
+  .scale-cards-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .scale-cards-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.scale-card {
+  position: relative;
+  background: var(--bg-module);
+  border: 2px solid var(--card-border, var(--border-strong));
+  border-radius: 12px;
+  padding: 12px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  min-height: 195px;
+  transition: transform 0.14s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.14s ease, border-color 0.14s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.scale-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22), 0 0 16px var(--card-glow, rgba(92, 232, 160, 0.3));
+}
+
+.scale-card:active,
+.scale-card.active {
+  transform: scale(0.97);
+  border-color: var(--card-color);
+  box-shadow: 0 0 24px var(--card-glow, rgba(92, 232, 160, 0.6)), inset 0 0 16px var(--card-glow, rgba(92, 232, 160, 0.25));
+  background: var(--card-bg, var(--bg-module));
+}
+
+.scale-card-top-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 3px 12px;
+  border-radius: 20px;
+  color: #ffffff;
+  background: var(--card-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  letter-spacing: 0.04em;
+}
+
+.scale-card-gesture-visual {
+  width: 68px;
+  height: 78px;
+  display: grid;
+  place-items: center;
+}
+
+.scale-card-gesture-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--ink);
+  line-height: 1.25;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scale-card-notation-tag {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1.5px solid var(--card-color);
+  color: var(--card-color);
+  background: var(--card-tint, rgba(255, 255, 255, 0.04));
+  width: 100%;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+/* 3 Bottom Panels */
+.scale-bottom-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 960px) {
+  .scale-bottom-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.scale-panel {
+  background: var(--bg-module);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scale-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--ink);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.scale-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.scale-summary-table th {
+  text-align: left;
+  padding: 4px 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-muted);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.scale-summary-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.scale-table-row {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.scale-table-row:hover,
+.scale-table-row.active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.scale-row-badge {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 4px;
+  color: #ffffff;
+}
+
+/* Scale Order and Melody Panel */
+.scale-flow-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+}
+
+.scale-flow-pill {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.scale-flow-pill:hover,
+.scale-flow-pill.active {
+  transform: scale(1.12);
+  box-shadow: 0 0 10px currentColor;
+}
+
+.scale-flow-arrow {
+  color: var(--ink-muted);
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.melody-box {
+  background: var(--bg-well);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.melody-notation-string {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: 0.04em;
+  text-align: center;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--bg-module);
+  border: 1px dashed var(--border-strong);
+}
+
+/* Keterangan Checklist */
+.scale-notes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.scale-notes-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.scale-check-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #10b981;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

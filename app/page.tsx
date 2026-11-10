@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -69,23 +70,39 @@ type SpeechRecognitionLike = {
 const gestureLabels: Record<string, string> = {
   None: "Mencari tangan di kamera",
   Closed_Fist: "Hentikan musik (Stop)",
-  Open_Palm: "Aktifkan sensor & mainkan akor",
-  Pointing_Up: "Mainkan nada melodi",
+  Open_Palm: "Nada Sol (5 Jari / Telapak Terbuka)",
+  Pointing_Up: "Nada Do (1 Jari / Telunjuk)",
+  Victory: "Nada Re (2 Jari / Telunjuk + Tengah)",
   Thumb_Down: "Hentikan musik (Stop)",
   Thumb_Up: "Lonjakan volume (Boost)",
-  Victory: "Pindah bank instrumen",
-  ILoveYou: "Efek sub-drop",
+  ILoveYou: "Nada Si (Telunjuk + Jempol + Kelingking)",
+  Do: "Nada Do (1 Jari / Telunjuk)",
+  Re: "Nada Re (2 Jari / Telunjuk + Tengah)",
+  Mi: "Nada Mi (3 Jari)",
+  Fa: "Nada Fa (4 Jari)",
+  Sol: "Nada Sol (5 Jari / Telapak Terbuka)",
+  La: "Nada La (Telunjuk + Jempol)",
+  Si: "Nada Si (Telunjuk + Jempol + Kelingking)",
+  Do_High: "Nada Do' (Telunjuk + Kelingking)",
 };
 
 const gestureCodes: Record<string, string> = {
   None: "IDLE",
   Closed_Fist: "STOP",
-  Open_Palm: "CHRD",
-  Pointing_Up: "NOTE",
+  Open_Palm: "SOL",
+  Pointing_Up: "DO",
+  Victory: "RE",
   Thumb_Down: "MUTE",
   Thumb_Up: "GAIN",
-  Victory: "BANK",
-  ILoveYou: "DROP",
+  ILoveYou: "SI",
+  Do: "DO",
+  Re: "RE",
+  Mi: "MI",
+  Fa: "FA",
+  Sol: "SOL",
+  La: "LA",
+  Si: "SI",
+  Do_High: "DO'",
 };
 
 const handConnections = [
@@ -95,6 +112,366 @@ const handConnections = [
   [9, 13], [13, 14], [14, 15], [15, 16],
   [13, 17], [17, 18], [18, 19], [19, 20], [0, 17],
 ];
+
+export type ScaleNote = {
+  id: string;
+  name: string;
+  notation: string;
+  solfege: string;
+  noteName: string;
+  freq: number;
+  gesture: string;
+  desc: string;
+  color: string;
+  border: string;
+  badgeBg: string;
+};
+
+export const SCALE_NOTES: ScaleNote[] = [
+  {
+    id: "do",
+    name: "Do",
+    notation: "C (Do)",
+    solfege: "Do",
+    noteName: "C4",
+    freq: 261.63,
+    gesture: "1 Jari",
+    desc: "Telunjuk (1 jari)",
+    color: "#10B981",
+    border: "#10B981",
+    badgeBg: "rgba(16, 185, 129, 0.16)",
+  },
+  {
+    id: "re",
+    name: "Re",
+    notation: "D (Re)",
+    solfege: "Re",
+    noteName: "D4",
+    freq: 293.66,
+    gesture: "2 Jari",
+    desc: "Telunjuk + Tengah (2 jari)",
+    color: "#F59E0B",
+    border: "#F59E0B",
+    badgeBg: "rgba(245, 158, 11, 0.16)",
+  },
+  {
+    id: "mi",
+    name: "Mi",
+    notation: "E (Mi)",
+    solfege: "Mi",
+    noteName: "E4",
+    freq: 329.63,
+    gesture: "3 Jari",
+    desc: "Telunjuk + Tengah + Manis (3 jari)",
+    color: "#EAB308",
+    border: "#EAB308",
+    badgeBg: "rgba(234, 179, 8, 0.16)",
+  },
+  {
+    id: "fa",
+    name: "Fa",
+    notation: "F (Fa)",
+    solfege: "Fa",
+    noteName: "F4",
+    freq: 349.23,
+    gesture: "4 Jari",
+    desc: "Empat jari (kecuali kelingking)",
+    color: "#06B6D4",
+    border: "#06B6D4",
+    badgeBg: "rgba(6, 182, 212, 0.16)",
+  },
+  {
+    id: "sol",
+    name: "Sol",
+    notation: "G (Sol)",
+    solfege: "Sol",
+    noteName: "G4",
+    freq: 392.0,
+    gesture: "5 Jari",
+    desc: "Lima jari (telapak terbuka)",
+    color: "#3B82F6",
+    border: "#3B82F6",
+    badgeBg: "rgba(59, 130, 246, 0.16)",
+  },
+  {
+    id: "la",
+    name: "La",
+    notation: "A (La)",
+    solfege: "La",
+    noteName: "A4",
+    freq: 440.0,
+    gesture: "Telunjuk + Jempol",
+    desc: "Telunjuk + Jempol",
+    color: "#6366F1",
+    border: "#6366F1",
+    badgeBg: "rgba(99, 102, 241, 0.16)",
+  },
+  {
+    id: "si",
+    name: "Si",
+    notation: "B (Si)",
+    solfege: "Si",
+    noteName: "B4",
+    freq: 493.88,
+    gesture: "Telunjuk + Jempol + Kelingking",
+    desc: "Telunjuk + Jempol + Kelingking",
+    color: "#A855F7",
+    border: "#A855F7",
+    badgeBg: "rgba(168, 85, 247, 0.16)",
+  },
+  {
+    id: "do_high",
+    name: "Do'",
+    notation: "C' (Do')",
+    solfege: "Do'",
+    noteName: "C5",
+    freq: 523.25,
+    gesture: "Telunjuk + Kelingking",
+    desc: "Telunjuk + Kelingking",
+    color: "#EC4899",
+    border: "#EC4899",
+    badgeBg: "rgba(236, 72, 153, 0.16)",
+  },
+];
+
+function HandGestureSvg({
+  noteId,
+  color,
+  active,
+}: {
+  noteId: string;
+  color: string;
+  active: boolean;
+}) {
+  const thumbExt = ["fa", "sol", "la", "si"].includes(noteId);
+  const midExt = ["re", "mi", "fa", "sol"].includes(noteId);
+  const ringExt = ["mi", "fa", "sol"].includes(noteId);
+  const pinkyExt = ["sol", "si", "do_high"].includes(noteId);
+
+  return (
+    <svg
+      width="68"
+      height="78"
+      viewBox="0 0 100 120"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M 32 68 C 30 60, 36 54, 42 52 L 68 52 C 76 54, 80 62, 78 74 L 72 104 C 52 110, 44 110, 34 104 Z"
+        fill={color}
+        fillOpacity={active ? 0.32 : 0.12}
+        stroke={color}
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+      />
+      <line
+        x1="38"
+        y1="106"
+        x2="68"
+        y2="106"
+        stroke={color}
+        strokeWidth="2"
+        strokeDasharray="2 3"
+        opacity="0.6"
+      />
+
+      {thumbExt ? (
+        <path
+          d="M 34 76 L 14 66 C 8 62, 10 54, 16 52 C 22 50, 26 54, 34 60"
+          fill={color}
+          fillOpacity={active ? 0.95 : 0.8}
+          stroke={color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+        />
+      ) : (
+        <path
+          d="M 34 78 C 30 72, 34 64, 44 64 C 48 64, 50 72, 44 78 Z"
+          fill="currentColor"
+          fillOpacity="0.22"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        />
+      )}
+
+      <path
+        d="M 36 54 L 36 18 C 36 10, 46 10, 46 18 L 46 54"
+        fill={color}
+        fillOpacity={active ? 1 : 0.85}
+        stroke={color}
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
+      {active && <circle cx="41" cy="14" r="5" fill="#FFFFFF" opacity="0.9" />}
+
+      {midExt ? (
+        <>
+          <path
+            d="M 47 53 L 47 12 C 47 4, 57 4, 57 12 L 57 53"
+            fill={color}
+            fillOpacity={active ? 1 : 0.85}
+            stroke={color}
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          />
+          {active && <circle cx="52" cy="8" r="5" fill="#FFFFFF" opacity="0.9" />}
+        </>
+      ) : (
+        <rect
+          x="47"
+          y="44"
+          width="10"
+          height="20"
+          rx="5"
+          fill="currentColor"
+          fillOpacity="0.22"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        />
+      )}
+
+      {ringExt ? (
+        <>
+          <path
+            d="M 58 54 L 58 18 C 58 10, 68 10, 68 18 L 68 54"
+            fill={color}
+            fillOpacity={active ? 1 : 0.85}
+            stroke={color}
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          />
+          {active && <circle cx="63" cy="14" r="5" fill="#FFFFFF" opacity="0.9" />}
+        </>
+      ) : (
+        <rect
+          x="58"
+          y="46"
+          width="10"
+          height="18"
+          rx="5"
+          fill="currentColor"
+          fillOpacity="0.22"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        />
+      )}
+
+      {pinkyExt ? (
+        <>
+          <path
+            d="M 69 58 L 73 30 C 74 22, 82 24, 81 32 L 77 62"
+            fill={color}
+            fillOpacity={active ? 1 : 0.85}
+            stroke={color}
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          />
+          {active && <circle cx="77" cy="27" r="4.5" fill="#FFFFFF" opacity="0.9" />}
+        </>
+      ) : (
+        <rect
+          x="69"
+          y="52"
+          width="9"
+          height="16"
+          rx="4.5"
+          fill="currentColor"
+          fillOpacity="0.22"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        />
+      )}
+    </svg>
+  );
+}
+
+function getFingerStates(landmarks: Landmark[]) {
+  if (!landmarks || landmarks.length < 21) {
+    return { thumb: false, index: false, middle: false, ring: false, pinky: false, count: 0 };
+  }
+
+  const wrist = landmarks[0];
+  const distSq = (a: Landmark, b: Landmark) => {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+  };
+
+  const isUpright = (tip: Landmark, pip: Landmark) => tip.y < pip.y - 0.012;
+  const isFar = (tip: Landmark, pip: Landmark) => distSq(tip, wrist) > distSq(pip, wrist) * 1.12;
+
+  const index = isUpright(landmarks[8], landmarks[6]) || isFar(landmarks[8], landmarks[6]);
+  const middle = isUpright(landmarks[12], landmarks[10]) || isFar(landmarks[12], landmarks[10]);
+  const ring = isUpright(landmarks[16], landmarks[14]) || isFar(landmarks[16], landmarks[14]);
+  const pinky = isUpright(landmarks[20], landmarks[18]) || isFar(landmarks[20], landmarks[18]);
+
+  const thumbTipToPinky = distSq(landmarks[4], landmarks[17]);
+  const thumbIpToPinky = distSq(landmarks[3], landmarks[17]);
+  const thumb =
+    thumbTipToPinky > thumbIpToPinky * 1.15 ||
+    distSq(landmarks[4], wrist) > distSq(landmarks[2], wrist) * 1.18;
+
+  const count =
+    (thumb ? 1 : 0) +
+    (index ? 1 : 0) +
+    (middle ? 1 : 0) +
+    (ring ? 1 : 0) +
+    (pinky ? 1 : 0);
+
+  return { thumb, index, middle, ring, pinky, count };
+}
+
+function detectScaleNote(landmarks: Landmark[]): string | null {
+  const f = getFingerStates(landmarks);
+  if (f.count === 0) return null;
+
+  // 1. Si = Telunjuk + Jempol + Kelingking
+  if (f.thumb && f.index && f.pinky && !f.middle && !f.ring) {
+    return "si";
+  }
+
+  // 2. Do' = Telunjuk + Kelingking (Rock / Horns)
+  if (f.index && f.pinky && !f.middle && !f.ring) {
+    return "do_high";
+  }
+
+  // 3. La = Telunjuk + Jempol (L-shape)
+  if (f.thumb && f.index && !f.middle && !f.ring && !f.pinky) {
+    return "la";
+  }
+
+  // 4. Sol = 5 Jari (Telapak terbuka)
+  if (f.count === 5 || (f.thumb && f.index && f.middle && f.ring && f.pinky)) {
+    return "sol";
+  }
+
+  // 5. Fa = 4 Jari (kecuali kelingking atau 4 jari terbuka)
+  if (
+    (f.thumb && f.index && f.middle && f.ring && !f.pinky) ||
+    (!f.thumb && f.index && f.middle && f.ring && f.pinky) ||
+    f.count === 4
+  ) {
+    return "fa";
+  }
+
+  // 6. Mi = 3 Jari (Telunjuk + Tengah + Manis)
+  if ((f.index && f.middle && f.ring && !f.pinky) || f.count === 3) {
+    return "mi";
+  }
+
+  // 7. Re = 2 Jari (Telunjuk + Tengah)
+  if ((f.index && f.middle && !f.ring && !f.pinky) || f.count === 2) {
+    return "re";
+  }
+
+  // 8. Do = 1 Jari (Telunjuk)
+  if ((f.index && !f.middle && !f.ring && !f.pinky) || f.count === 1) {
+    return "do";
+  }
+
+  return null;
+}
 
 const C0 = 16.352;
 const PENTA_SEMI = [0, 2, 4, 7, 9];
@@ -131,49 +508,387 @@ const musicModes: MusicMode[] = [
   {
     id: "piano",
     bankCode: "BANK 01",
-    name: "Piano Pelangi",
-    caption: "Harmoni segitiga lembut",
+    name: "Piano Akustik",
+    caption: "Concert grand piano resonan",
     instruction:
-      "Angkat tangan tinggi untuk oktaf atas, turunkan untuk oktaf bawah. Geser horizontal untuk mengatur bukaan filter.",
+      "Ketukan palu felt akustik, overton senar ganda unison, dan resonansi soundboard kayu megah.",
   },
   {
     id: "bells",
     bankCode: "BANK 02",
-    name: "Lonceng Bintang",
-    caption: "Resonansi harmonik jernih",
+    name: "Glockenspiel",
+    caption: "Bilah lonceng logam & kalimba",
     instruction:
-      "Gerakkan telunjuk perlahan di area atas untuk denting lonceng panjang. Tangan kiri mengisi resonansi oktaf bawah.",
+      "Dentingan mallet baja kristal dengan mode getar inharmonik murni dan desis sustain alami.",
   },
   {
-    id: "drums",
+    id: "guitar",
     bankCode: "BANK 03",
-    name: "Drum Pop",
-    caption: "8 pad perkusi sintetis",
+    name: "Gitar Akustik",
+    caption: "Petikan dawai & harpa kayu",
     instruction:
-      "Posisi tinggi memicu hi-hat dan crash, posisi rendah memicu kick dan tom. Hentakkan tangan ke bawah untuk pukulan aksen.",
-    drumLabels: ["Kick", "Tom", "Pop", "Snare", "Clap", "Hi-hat", "Rim", "Crash"],
+      "Petikan senar nilon dengan redaman frekuensi tinggi dan rongga resonansi bodi kayu cedar.",
   },
   {
-    id: "synth",
+    id: "flute",
     bankCode: "BANK 04",
-    name: "Synth Orbit",
-    caption: "Osilator sawtooth ganda",
+    name: "Seruling Flute",
+    caption: "Tiup kayu dengan vibrato alami",
     instruction:
-      "Tangan kanan memainkan lead sawtooth detuned, tangan kiri memainkan sub-bass gelombang kotak.",
+      "Embusan udara lembut instrumen tiup kayu dengan transien tiup dan vibrato ekspresif 5.3 Hz.",
   },
   {
-    id: "beats",
+    id: "marimba",
     bankCode: "BANK 05",
-    name: "Beat Robot",
-    caption: "Sekuen pola ritme instan",
+    name: "Marimba Kayu",
+    caption: "Bilah perkusi kayu rosewood",
     instruction:
-      "Setiap tingkat ketinggian tangan memilih salah satu dari 8 pola sekuenser ritme otomatis.",
-    drumLabels: ["Bop", "Hop", "Tik", "Clap", "Disco", "Game", "Cute", "Final"],
+      "Dentuman lembut mallet karet marimba dengan overton oktaf ganda pada bilah kayu hangat.",
   },
 ];
 
 function isDrumLike(mode: MusicModeId) {
-  return mode === "drums" || mode === "beats";
+  return mode === "marimba";
+}
+
+// 1. Concert Grand Acoustic Piano
+function playAcousticPiano(
+  ctx: AudioContext,
+  dest: AudioNode,
+  freq: number,
+  pan = 0,
+  velocity = 0.88,
+) {
+  const t = ctx.currentTime;
+  const panner = ctx.createStereoPanner();
+  panner.pan.setValueAtTime(Math.max(-0.85, Math.min(0.85, pan)), t);
+
+  const bodyFilter = ctx.createBiquadFilter();
+  bodyFilter.type = "peaking";
+  bodyFilter.frequency.setValueAtTime(680, t);
+  bodyFilter.Q.setValueAtTime(1.1, t);
+  bodyFilter.gain.setValueAtTime(3.5, t);
+
+  const mainGain = ctx.createGain();
+  mainGain.gain.setValueAtTime(0.0001, t);
+  mainGain.gain.linearRampToValueAtTime(0.42 * velocity, t + 0.005);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 2.8);
+
+  const hammerLength = 0.015;
+  const hammerBuf = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * hammerLength)),
+    ctx.sampleRate,
+  );
+  const data = hammerBuf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.003));
+  }
+  const hammerSrc = ctx.createBufferSource();
+  hammerSrc.buffer = hammerBuf;
+  const hammerFilter = ctx.createBiquadFilter();
+  hammerFilter.type = "bandpass";
+  hammerFilter.frequency.setValueAtTime(Math.min(3200, freq * 2.8), t);
+  hammerFilter.Q.setValueAtTime(1.8, t);
+  const hammerGain = ctx.createGain();
+  hammerGain.gain.setValueAtTime(0.28 * velocity, t);
+  hammerGain.gain.exponentialRampToValueAtTime(0.001, t + hammerLength);
+  hammerSrc.connect(hammerFilter);
+  hammerFilter.connect(hammerGain);
+  hammerGain.connect(mainGain);
+  hammerSrc.start(t);
+
+  const partials: [number, number, number][] = [
+    [1.0, 1.0, 1.0],
+    [1.0018, 0.65, 0.96],
+    [2.0008, 0.48, 0.76],
+    [3.002, 0.28, 0.54],
+    [4.005, 0.14, 0.38],
+    [5.009, 0.07, 0.26],
+    [6.015, 0.03, 0.18],
+  ];
+
+  partials.forEach(([ratio, amp, decayMult]) => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = ratio > 2.5 ? "sine" : "triangle";
+    osc.frequency.setValueAtTime(freq * ratio, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(amp * velocity * 0.38, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.5 * decayMult);
+    osc.connect(g);
+    g.connect(mainGain);
+    osc.start(t);
+    osc.stop(t + 2.6 * decayMult);
+  });
+
+  mainGain.connect(bodyFilter);
+  bodyFilter.connect(panner);
+  panner.connect(dest);
+}
+
+// 2. Glockenspiel / Kalimba (Physical Chime Modes)
+function playGlockenspiel(
+  ctx: AudioContext,
+  dest: AudioNode,
+  freq: number,
+  pan = 0,
+  velocity = 0.82,
+) {
+  const t = ctx.currentTime;
+  const panner = ctx.createStereoPanner();
+  panner.pan.setValueAtTime(pan, t);
+
+  const mainGain = ctx.createGain();
+  mainGain.gain.setValueAtTime(0.0001, t);
+  mainGain.gain.linearRampToValueAtTime(0.38 * velocity, t + 0.002);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 2.6);
+
+  const click = ctx.createOscillator();
+  const clickGain = ctx.createGain();
+  click.type = "sine";
+  click.frequency.setValueAtTime(freq * 5.8, t);
+  click.frequency.exponentialRampToValueAtTime(freq * 1.5, t + 0.02);
+  clickGain.gain.setValueAtTime(0.4 * velocity, t);
+  clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
+  click.connect(clickGain);
+  clickGain.connect(mainGain);
+  click.start(t);
+  click.stop(t + 0.03);
+
+  const modes: [number, number, number][] = [
+    [1.0, 1.0, 1.0],
+    [2.756, 0.38, 0.7],
+    [5.404, 0.16, 0.45],
+    [8.933, 0.06, 0.25],
+  ];
+
+  modes.forEach(([ratio, amp, decayMult]) => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq * ratio, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(amp * velocity * 0.4, t + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4 * decayMult);
+    osc.connect(g);
+    g.connect(mainGain);
+    osc.start(t);
+    osc.stop(t + 2.5 * decayMult);
+  });
+
+  mainGain.connect(panner);
+  panner.connect(dest);
+}
+
+// 3. Acoustic Plucked Guitar / Harp
+function playAcousticGuitar(
+  ctx: AudioContext,
+  dest: AudioNode,
+  freq: number,
+  pan = 0,
+  velocity = 0.86,
+) {
+  const t = ctx.currentTime;
+  const panner = ctx.createStereoPanner();
+  panner.pan.setValueAtTime(pan, t);
+
+  const bodyAir = ctx.createBiquadFilter();
+  bodyAir.type = "peaking";
+  bodyAir.frequency.setValueAtTime(220, t);
+  bodyAir.Q.setValueAtTime(2.2, t);
+  bodyAir.gain.setValueAtTime(4.0, t);
+
+  const bodyWood = ctx.createBiquadFilter();
+  bodyWood.type = "peaking";
+  bodyWood.frequency.setValueAtTime(480, t);
+  bodyWood.Q.setValueAtTime(1.8, t);
+  bodyWood.gain.setValueAtTime(3.0, t);
+
+  const mainGain = ctx.createGain();
+  mainGain.gain.setValueAtTime(0.0001, t);
+  mainGain.gain.linearRampToValueAtTime(0.44 * velocity, t + 0.006);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+
+  const pluckLen = 0.012;
+  const pluckBuf = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * pluckLen)),
+    ctx.sampleRate,
+  );
+  const pData = pluckBuf.getChannelData(0);
+  for (let i = 0; i < pData.length; i++) {
+    pData[i] =
+      (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.0025));
+  }
+  const pluckSrc = ctx.createBufferSource();
+  pluckSrc.buffer = pluckBuf;
+  const pluckGain = ctx.createGain();
+  pluckGain.gain.setValueAtTime(0.3 * velocity, t);
+  pluckGain.gain.exponentialRampToValueAtTime(0.001, t + pluckLen);
+  pluckSrc.connect(pluckGain);
+  pluckGain.connect(mainGain);
+  pluckSrc.start(t);
+
+  const partials: [number, number, number][] = [
+    [1.0, 1.0, 1.0],
+    [2.0, 0.55, 0.65],
+    [3.0, 0.32, 0.45],
+    [4.0, 0.18, 0.3],
+    [5.0, 0.09, 0.2],
+  ];
+
+  partials.forEach(([ratio, amp, decayMult]) => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = ratio === 1 ? "triangle" : "sine";
+    osc.frequency.setValueAtTime(freq * ratio, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(amp * velocity * 0.36, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2 * decayMult);
+    osc.connect(g);
+    g.connect(mainGain);
+    osc.start(t);
+    osc.stop(t + 2.3 * decayMult);
+  });
+
+  mainGain.connect(bodyAir);
+  bodyAir.connect(bodyWood);
+  bodyWood.connect(panner);
+  panner.connect(dest);
+}
+
+// 4. Acoustic Flute / Seruling
+function playAcousticFlute(
+  ctx: AudioContext,
+  dest: AudioNode,
+  freq: number,
+  pan = 0,
+  velocity = 0.8,
+) {
+  const t = ctx.currentTime;
+  const panner = ctx.createStereoPanner();
+  panner.pan.setValueAtTime(pan, t);
+
+  const mainGain = ctx.createGain();
+  mainGain.gain.setValueAtTime(0.0001, t);
+  mainGain.gain.linearRampToValueAtTime(0.35 * velocity, t + 0.045);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
+
+  const breathLen = 0.06;
+  const breathBuf = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * breathLen)),
+    ctx.sampleRate,
+  );
+  const bData = breathBuf.getChannelData(0);
+  for (let i = 0; i < bData.length; i++) {
+    bData[i] =
+      (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.015));
+  }
+  const breathSrc = ctx.createBufferSource();
+  breathSrc.buffer = breathBuf;
+  const breathFilter = ctx.createBiquadFilter();
+  breathFilter.type = "bandpass";
+  breathFilter.frequency.setValueAtTime(freq * 1.8, t);
+  breathFilter.Q.setValueAtTime(3.0, t);
+  const breathGain = ctx.createGain();
+  breathGain.gain.setValueAtTime(0.22 * velocity, t);
+  breathGain.gain.exponentialRampToValueAtTime(0.001, t + breathLen);
+  breathSrc.connect(breathFilter);
+  breathFilter.connect(breathGain);
+  breathGain.connect(mainGain);
+  breathSrc.start(t);
+
+  const osc = ctx.createOscillator();
+  const osc2 = ctx.createOscillator();
+  const lfo = ctx.createOscillator();
+  const lfoGain = ctx.createGain();
+
+  lfo.frequency.setValueAtTime(5.3, t);
+  lfoGain.gain.setValueAtTime(0, t);
+  lfoGain.gain.linearRampToValueAtTime(freq * 0.012, t + 0.25);
+  lfo.connect(lfoGain);
+  lfoGain.connect(osc.frequency);
+  lfo.start(t);
+  lfo.stop(t + 2.0);
+
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(freq, t);
+
+  osc2.type = "triangle";
+  osc2.frequency.setValueAtTime(freq * 2.0, t);
+
+  const g1 = ctx.createGain();
+  g1.gain.setValueAtTime(0.38 * velocity, t);
+  const g2 = ctx.createGain();
+  g2.gain.setValueAtTime(0.09 * velocity, t);
+
+  osc.connect(g1);
+  osc2.connect(g2);
+  g1.connect(mainGain);
+  g2.connect(mainGain);
+
+  osc.start(t);
+  osc2.start(t);
+  osc.stop(t + 1.9);
+  osc2.stop(t + 1.9);
+
+  mainGain.connect(panner);
+  panner.connect(dest);
+}
+
+// 5. Acoustic Rosewood Marimba
+function playAcousticMarimba(
+  ctx: AudioContext,
+  dest: AudioNode,
+  freq: number,
+  pan = 0,
+  velocity = 0.85,
+) {
+  const t = ctx.currentTime;
+  const panner = ctx.createStereoPanner();
+  panner.pan.setValueAtTime(pan, t);
+
+  const mainGain = ctx.createGain();
+  mainGain.gain.setValueAtTime(0.0001, t);
+  mainGain.gain.linearRampToValueAtTime(0.44 * velocity, t + 0.003);
+  mainGain.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
+
+  const thud = ctx.createOscillator();
+  const thudGain = ctx.createGain();
+  thud.type = "sine";
+  thud.frequency.setValueAtTime(freq * 3.2, t);
+  thud.frequency.exponentialRampToValueAtTime(freq * 0.8, t + 0.02);
+  thudGain.gain.setValueAtTime(0.32 * velocity, t);
+  thudGain.gain.exponentialRampToValueAtTime(0.001, t + 0.022);
+  thud.connect(thudGain);
+  thudGain.connect(mainGain);
+  thud.start(t);
+  thud.stop(t + 0.025);
+
+  const modes: [number, number, number][] = [
+    [1.0, 1.0, 1.0],
+    [3.98, 0.42, 0.4],
+    [9.2, 0.12, 0.18],
+  ];
+
+  modes.forEach(([ratio, amp, decayMult]) => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq * ratio, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(amp * velocity * 0.38, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4 * decayMult);
+    osc.connect(g);
+    g.connect(mainGain);
+    osc.start(t);
+    osc.stop(t + 1.5 * decayMult);
+  });
+
+  mainGain.connect(panner);
+  panner.connect(dest);
 }
 
 function playNote(
@@ -181,78 +896,26 @@ function playNote(
   dest: AudioNode,
   freq: number,
   mode: MusicModeId,
-  brightness: number,
-  pan: number,
-  isBass: boolean,
+  brightness = 0.5,
+  pan = 0,
+  isBass = false,
 ) {
-  const t = ctx.currentTime;
-  const dur = isBass ? 0.75 : 0.5;
-  const vol = isBass ? 0.3 : 0.4;
-
-  const panner = ctx.createStereoPanner();
-  panner.pan.setValueAtTime(pan * 0.6, t);
-
-  const filter = ctx.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.setValueAtTime(500 + brightness * 4500, t);
-  filter.Q.value = 1.5;
-
-  const gain = ctx.createGain();
-  gain.gain.setValueAtTime(0.001, t);
-
-  filter.connect(panner);
-  panner.connect(gain);
-  gain.connect(dest);
-
-  const voice = (
-    ratio: number,
-    volume: number,
-    type: OscillatorType,
-    length: number,
-    target = filter as AudioNode,
-  ) => {
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq * ratio, t);
-    g.gain.setValueAtTime(0.001, t);
-    g.gain.exponentialRampToValueAtTime(volume, t + 0.016);
-    g.gain.exponentialRampToValueAtTime(0.001, t + length);
-    o.connect(g);
-    g.connect(target);
-    o.start(t);
-    o.stop(t + length + 0.03);
-  };
-
+  const actualFreq = isBass ? freq * 0.5 : freq;
+  const vel =
+    (isBass ? 0.78 : 0.88) *
+    Math.max(0.7, Math.min(1.2, 0.7 + brightness * 0.4));
   if (mode === "piano") {
-    gain.gain.exponentialRampToValueAtTime(vol, t + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    voice(1, vol, "triangle", dur);
-    voice(2, vol * 0.08, "sine", dur * 0.6);
+    playAcousticPiano(ctx, dest, actualFreq, pan, vel);
   } else if (mode === "bells") {
-    gain.gain.exponentialRampToValueAtTime(vol, t + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + dur * 1.5);
-    voice(1, vol * 0.9, "sine", dur * 1.4);
-    voice(2.76, vol * 0.18, "sine", dur * 0.8, panner);
-    voice(4.07, vol * 0.06, "sine", dur * 0.5, panner);
-  } else if (mode === "synth") {
-    gain.gain.exponentialRampToValueAtTime(vol * 0.7, t + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.8);
-    voice(1, vol * 0.6, isBass ? "square" : "sawtooth", dur * 0.75);
-    voice(1.005, vol * 0.4, isBass ? "square" : "sawtooth", dur * 0.6);
-  } else if (mode === "beats") {
-    gain.gain.exponentialRampToValueAtTime(vol * 0.5, t + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-    const o = ctx.createOscillator();
-    o.type = "square";
-    o.frequency.setValueAtTime(freq, t);
-    o.frequency.exponentialRampToValueAtTime(
-      freq * (isBass ? 0.5 : 2),
-      t + 0.1,
-    );
-    o.connect(filter);
-    o.start(t);
-    o.stop(t + 0.25);
+    playGlockenspiel(ctx, dest, actualFreq, pan, vel * 0.95);
+  } else if (mode === "guitar") {
+    playAcousticGuitar(ctx, dest, actualFreq, pan, vel);
+  } else if (mode === "flute") {
+    playAcousticFlute(ctx, dest, actualFreq, pan, vel * 0.92);
+  } else if (mode === "marimba") {
+    playAcousticMarimba(ctx, dest, actualFreq, pan, vel * 0.96);
+  } else {
+    playAcousticPiano(ctx, dest, actualFreq, pan, vel);
   }
 }
 
@@ -261,12 +924,32 @@ function playChord(
   dest: AudioNode,
   freq: number,
   mode: MusicModeId,
-  brightness: number,
-  pan: number,
+  brightness = 0.5,
+  pan = 0,
 ) {
   playNote(ctx, dest, freq, mode, brightness, pan, false);
-  playNote(ctx, dest, freq * Math.pow(2, 4 / 12), mode, brightness, pan, false);
-  playNote(ctx, dest, freq * Math.pow(2, 7 / 12), mode, brightness, pan, false);
+  window.setTimeout(() => {
+    playNote(
+      ctx,
+      dest,
+      freq * Math.pow(2, 4 / 12),
+      mode,
+      brightness,
+      pan + 0.1,
+      false,
+    );
+  }, 22);
+  window.setTimeout(() => {
+    playNote(
+      ctx,
+      dest,
+      freq * Math.pow(2, 7 / 12),
+      mode,
+      brightness,
+      pan + 0.2,
+      false,
+    );
+  }, 44);
 }
 
 function scheduleDrumHit(
@@ -600,6 +1283,9 @@ export default function Home() {
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [activeScaleNoteId, setActiveScaleNoteId] = useState<string | null>(null);
+  const [playingMelody, setPlayingMelody] = useState(false);
+  const [showMatrixView, setShowMatrixView] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -614,6 +1300,8 @@ export default function Home() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
   const noteReleaseTimerRef = useRef<number | null>(null);
+  const melodyTimerRef = useRef<number | null>(null);
+  const scaleReleaseTimerRef = useRef<number | null>(null);
   const musicPlayingRef = useRef(false);
   const musicModeRef = useRef<MusicModeId>("piano");
   const handMusicRef = useRef({
@@ -806,6 +1494,10 @@ export default function Home() {
     if (noteReleaseTimerRef.current)
       window.clearTimeout(noteReleaseTimerRef.current);
     noteReleaseTimerRef.current = null;
+    if (melodyTimerRef.current) window.clearTimeout(melodyTimerRef.current);
+    melodyTimerRef.current = null;
+    if (scaleReleaseTimerRef.current) window.clearTimeout(scaleReleaseTimerRef.current);
+    scaleReleaseTimerRef.current = null;
     if (audioContextRef.current) void audioContextRef.current.close();
     audioContextRef.current = null;
     masterGainRef.current = null;
@@ -817,8 +1509,10 @@ export default function Home() {
     previousPalmRef.current = null;
     setHandPositions({});
     setMusicPlaying(false);
+    setPlayingMelody(false);
+    setActiveScaleNoteId(null);
     setLastPlayedLabel(
-      "Sensor musik berhenti: buka telapak tangan atau sentuh matriks untuk mulai",
+      "Sensor musik berhenti: buka telapak tangan atau sentuh tangga nada untuk mulai",
     );
   }, []);
 
@@ -827,7 +1521,7 @@ export default function Home() {
     musicPlayingRef.current = true;
     setMusicPlaying(true);
     setLastPlayedLabel(
-      "Sensor aktif: angkat telunjuk di kamera atau geser matriks nada di bawah",
+      "Sensor aktif: angkat telunjuk di kamera atau sentuh tangga nada di bawah",
     );
   }, [ensureMusicAudio]);
 
@@ -844,6 +1538,102 @@ export default function Home() {
       musicModes.find((mode) => mode.id === nextMode) ?? musicModes[0];
     setLastPlayedLabel(`${next.bankCode} // ${next.name} siap dimainkan`);
   }, []);
+
+  const playScaleNote = useCallback(
+    (note: ScaleNote, pan = 0) => {
+      const audio = ensureMusicAudio();
+      if (!audio) return;
+      if (!musicPlayingRef.current) {
+        musicPlayingRef.current = true;
+        setMusicPlaying(true);
+      }
+
+      playNote(
+        audio.context,
+        audio.master,
+        note.freq,
+        musicModeRef.current,
+        0.5,
+        pan,
+        false,
+      );
+
+      setActiveScaleNoteId(note.id);
+      setLastPlayedLabel(
+        `Nada: ${note.name} (${note.notation}, ${Math.round(note.freq)} Hz) · Gerakan: ${note.gesture}`,
+      );
+
+      if (scaleReleaseTimerRef.current) {
+        window.clearTimeout(scaleReleaseTimerRef.current);
+      }
+      scaleReleaseTimerRef.current = window.setTimeout(() => {
+        setActiveScaleNoteId((prev) => (prev === note.id ? null : prev));
+      }, 550);
+    },
+    [ensureMusicAudio],
+  );
+
+  const playExampleMelody = useCallback(() => {
+    if (playingMelody) {
+      if (melodyTimerRef.current) {
+        window.clearTimeout(melodyTimerRef.current);
+        melodyTimerRef.current = null;
+      }
+      setPlayingMelody(false);
+      setActiveScaleNoteId(null);
+      showToast("Contoh melodi dihentikan.");
+      return;
+    }
+
+    const audio = ensureMusicAudio();
+    if (!audio) return;
+    if (!musicPlayingRef.current) {
+      musicPlayingRef.current = true;
+      setMusicPlaying(true);
+    }
+
+    const sequence = [
+      "do",
+      "re",
+      "mi",
+      "fa",
+      "sol",
+      "fa",
+      "mi",
+      "re",
+      "do",
+    ];
+    setPlayingMelody(true);
+    showToast("Memainkan melodi: Do - Re - Mi - Fa - Sol - Fa - Mi - Re - Do");
+
+    sequence.forEach((noteId, index) => {
+      const timer = window.setTimeout(() => {
+        const note = SCALE_NOTES.find((n) => n.id === noteId);
+        if (note && musicPlayingRef.current) {
+          playNote(
+            audio.context,
+            audio.master,
+            note.freq,
+            musicModeRef.current,
+            0.5,
+            0,
+            false,
+          );
+          setActiveScaleNoteId(note.id);
+          setLastPlayedLabel(
+            `Melodi: ${note.name} (${note.notation}) · ${note.gesture}`,
+          );
+        }
+        if (index === sequence.length - 1) {
+          window.setTimeout(() => {
+            setPlayingMelody(false);
+            setActiveScaleNoteId(null);
+          }, 550);
+        }
+      }, index * 420);
+      melodyTimerRef.current = timer;
+    });
+  }, [ensureMusicAudio, playingMelody, showToast]);
 
   const triggerMatrixCoordinate = useCallback(
     (normX: number, normY: number) => {
@@ -921,7 +1711,7 @@ export default function Home() {
       const newPositions: HandPositions = {};
 
       for (const hand of hands) {
-        if (hand.score < 0.5) continue;
+        if (hand.score < 0.45) continue;
         const tip = hand.landmarks[8];
         const palm = hand.landmarks[9] ?? hand.landmarks[0];
         if (!tip) continue;
@@ -929,16 +1719,67 @@ export default function Home() {
         const isRight = hand.handedness === "Right";
         const isBass = !isRight;
         const key = isRight ? ("right" as const) : ("left" as const);
-        const scale = isBass ? bassScale : melodyScale;
         const stateKey = isBass ? ("bass" as const) : ("melody" as const);
 
-        const isPlaying =
-          hand.name === "Pointing_Up" || hand.name === "Open_Palm";
         const screenX = 1 - tip.x;
         const brightness = Math.max(0, Math.min(1, screenX));
         const pan = screenX * 2 - 1;
 
+        // 1. Scale Gesture detection (Do, Re, Mi, Fa, Sol, La, Si, Do')
+        const scaleNoteId = detectScaleNote(hand.landmarks);
+        if (scaleNoteId) {
+          const noteObj = SCALE_NOTES.find((n) => n.id === scaleNoteId);
+          if (noteObj) {
+            const prev = handMusicRef.current[stateKey];
+            const noteChanged = Math.abs(noteObj.freq - prev.freq) > 0.5;
+            const elapsed = now - prev.at;
+
+            if (noteChanged || elapsed > 320) {
+              handMusicRef.current[stateKey] = { freq: noteObj.freq, at: now };
+              playNote(
+                audio.context,
+                audio.master,
+                noteObj.freq,
+                mode,
+                brightness,
+                pan,
+                isBass,
+              );
+              setActiveScaleNoteId(noteObj.id);
+              setGesture(noteObj.name);
+              setGestureScore(hand.score);
+            }
+
+            newPositions[key] = {
+              x: tip.x,
+              y: tip.y,
+              note: noteObj.name,
+              playing: true,
+            };
+            setLastPlayedLabel(
+              `Sensor tangan: ${noteObj.name} (${noteObj.notation}, ${Math.round(noteObj.freq)} Hz) · Gerakan: ${noteObj.gesture}`,
+            );
+            continue;
+          }
+        }
+
+        // 2. Closed Fist: stop/silence
+        if (hand.name === "Closed_Fist") {
+          setActiveScaleNoteId(null);
+          newPositions[key] = {
+            x: tip.x,
+            y: tip.y,
+            note: "",
+            playing: false,
+          };
+          continue;
+        }
+
+        // 3. Fallback continuous matrix position
+        const isPlaying =
+          hand.name === "Pointing_Up" || hand.name === "Open_Palm";
         if (isPlaying) {
+          const scale = isBass ? bassScale : melodyScale;
           const note = yToNote(tip.y, scale);
           const prev = handMusicRef.current[stateKey];
           const freqChanged = Math.abs(note.freq - prev.freq) > 1;
@@ -949,17 +1790,7 @@ export default function Home() {
           if (freqChanged && elapsed > cooldown) {
             handMusicRef.current[stateKey] = { freq: note.freq, at: now };
 
-            if (mode === "drums") {
-              const padIndex = Math.floor(
-                (1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99,
-              );
-              scheduleDrumHit(audio.context, audio.master, padIndex);
-            } else if (mode === "beats") {
-              const padIndex = Math.floor(
-                (1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99,
-              );
-              scheduleBeatPattern(audio.context, audio.master, padIndex);
-            } else if (hand.name === "Open_Palm") {
+            if (hand.name === "Open_Palm") {
               playChord(
                 audio.context,
                 audio.master,
@@ -981,22 +1812,14 @@ export default function Home() {
             }
           }
 
-          const modeInfo =
-            musicModes.find((m) => m.id === mode) ?? musicModes[0];
-          const label =
-            isDrum && modeInfo.drumLabels
-              ? modeInfo.drumLabels[
-                  Math.floor((1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99)
-                ]
-              : note.name;
           newPositions[key] = {
             x: tip.x,
             y: tip.y,
-            note: label ?? note.name,
+            note: note.name,
             playing: true,
           };
           setLastPlayedLabel(
-            `Sensor tangan: ${label ?? note.name} (${Math.round(note.freq)} Hz)`,
+            `Sensor tangan: ${note.name} (${Math.round(note.freq)} Hz)`,
           );
         } else {
           newPositions[key] = {
@@ -1013,10 +1836,7 @@ export default function Home() {
           const velocity = prev ? (palm.y - prev.y) / dt : 0;
           if (velocity > 0.5 && now - lastStrikeAtRef.current > 170) {
             lastStrikeAtRef.current = now;
-            const padIndex = Math.floor(
-              (1 - Math.max(0, Math.min(0.999, tip.y))) * 7.99,
-            );
-            scheduleDrumHit(audio.context, audio.master, padIndex);
+            playNote(audio.context, audio.master, 220, mode, 0.5, pan, true);
           }
           previousPalmRef.current = { y: palm.y, at: now };
         }
@@ -2524,127 +3344,401 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="synth-workstation">
-            <div className="pitch-matrix-frame">
-              <div className="matrix-status-strip">
-                <span className="mono">{lastPlayedLabel}</span>
-                <span className="mono">
-                  KANAN: {handPositions.right?.note || "--"} | KIRI:{" "}
-                  {handPositions.left?.note || "--"}
+          {/* MAIN DECK: PEMETAAN GERAKAN TANGAN - TANGGA NADA (DO RE MI FA SOL LA SI DO') */}
+          <div className="scale-deck-frame">
+            <div className="scale-deck-header">
+              <div className="scale-deck-deco" aria-hidden="true">
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M9 18V5l12-2v13" />
+                  <circle cx="6" cy="18" r="3" />
+                  <circle cx="18" cy="16" r="3" />
+                </svg>
+                <span className="mono" style={{ fontSize: "11px", fontWeight: 700 }}>
+                  AUDIO ENGINE
                 </span>
               </div>
 
-              <div
-                ref={pitchFieldRef}
-                className="pitch-field"
-                role="application"
-                aria-label="Matriks 2D tinggi nada dan filter. Klik atau geser untuk membunyikan instrumen."
-                onPointerDown={(event) => {
-                  pointerDownRef.current = true;
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  triggerMatrixCoordinate(
-                    (event.clientX - rect.left) / rect.width,
-                    (event.clientY - rect.top) / rect.height,
-                  );
-                }}
-                onPointerMove={(event) => {
-                  if (!pointerDownRef.current) return;
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  triggerMatrixCoordinate(
-                    (event.clientX - rect.left) / rect.width,
-                    (event.clientY - rect.top) / rect.height,
-                  );
-                }}
-                onPointerUp={() => {
-                  pointerDownRef.current = false;
-                }}
-                onPointerCancel={() => {
-                  pointerDownRef.current = false;
-                }}
-              >
-                <div className="pitch-scale-labels">
-                  {scaleLabels.map((label, i) => (
-                    <div
-                      className="pitch-line"
-                      key={`${label}-${i}`}
-                      style={{
-                        top: `${(1 - i / Math.max(1, scaleLabels.length - 1)) * 100}%`,
-                      }}
-                    >
-                      <span>{label}</span>
-                    </div>
-                  ))}
+              <div className="scale-deck-title-wrap">
+                <h3>Pemetaan Gerakan Tangan - Tangga Nada</h3>
+                <div className="scale-deck-subtitle">
+                  Do Re Mi Fa Sol La Si Do&apos;
                 </div>
-
-                {handPositions.right?.playing && (
-                  <div
-                    className="hand-node melody"
-                    style={{
-                      top: `${handPositions.right.y * 100}%`,
-                      left: `${(1 - handPositions.right.x) * 100}%`,
-                    }}
-                  >
-                    <strong>{handPositions.right.note}</strong>
-                    <small>LEAD</small>
-                  </div>
-                )}
-
-                {handPositions.left?.playing && (
-                  <div
-                    className="hand-node bass"
-                    style={{
-                      top: `${handPositions.left.y * 100}%`,
-                      left: `${(1 - handPositions.left.x) * 100}%`,
-                    }}
-                  >
-                    <strong>{handPositions.left.note}</strong>
-                    <small>BASS</small>
-                  </div>
-                )}
               </div>
 
-              <div className="matrix-footer">
-                <span>SUMBU Y: FREKUENSI NADA (BAWAH = RENDAH, ATAS = TINGGI)</span>
-                <span>SUMBU X: FILTER CUTOFF (500 HZ SAMPAI 5000 HZ)</span>
+              <div className="scale-deck-deco" aria-hidden="true">
+                <IconWave />
+                <span className="mono" style={{ fontSize: "11px", fontWeight: 700 }}>
+                  24-BIT PCM
+                </span>
               </div>
             </div>
 
-            <aside className="synth-guide-card">
-              <div>
-                <span className="module-id">{activeMusicMode.bankCode}</span>
-                <h3>{activeMusicMode.name}</h3>
-                <p>{activeMusicMode.instruction}</p>
+            {/* 8 INTERACTIVE CARDS FROM THE IMAGE */}
+            <div
+              className="scale-cards-grid"
+              role="group"
+              aria-label="Tangga nada Do Re Mi Fa Sol La Si Do'"
+            >
+              {SCALE_NOTES.map((note) => {
+                const isActive = activeScaleNoteId === note.id;
+                return (
+                  <button
+                    key={note.id}
+                    type="button"
+                    className={`scale-card ${isActive ? "active" : ""}`}
+                    style={
+                      {
+                        "--card-color": note.color,
+                        "--card-border": isActive ? note.color : "var(--border-strong)",
+                        "--card-glow": `${note.color}88`,
+                        "--card-tint": note.badgeBg,
+                        "--card-bg": `${note.color}18`,
+                      } as React.CSSProperties
+                    }
+                    onClick={() => playScaleNote(note)}
+                    aria-label={`Mainkan nada ${note.name}, notasi ${note.notation}, gestur ${note.gesture}`}
+                  >
+                    <span className="scale-card-top-badge">{note.name}</span>
+                    <div className="scale-card-gesture-visual">
+                      <HandGestureSvg
+                        noteId={note.id}
+                        color={note.color}
+                        active={isActive}
+                      />
+                    </div>
+                    <span className="scale-card-gesture-name">{note.gesture}</span>
+                    <span className="scale-card-notation-tag">{note.notation}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 3 PANELS MATCHING THE USER'S IMAGE */}
+            <div className="scale-bottom-layout">
+              {/* Panel 1: Ringkasan Pemetaan */}
+              <div className="scale-panel">
+                <div className="scale-panel-header">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="2" y="4" width="20" height="16" rx="2" />
+                    <path d="M6 8h4" />
+                    <path d="M14 8h4" />
+                    <path d="M6 12h1" />
+                    <path d="M10 12h1" />
+                    <path d="M14 12h1" />
+                    <path d="M18 12h1" />
+                    <path d="M6 16h12" />
+                  </svg>
+                  <span>Ringkasan Pemetaan</span>
+                </div>
+
+                <table className="scale-summary-table">
+                  <thead>
+                    <tr>
+                      <th>Nada</th>
+                      <th>Notasi</th>
+                      <th>Gerakan Tangan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SCALE_NOTES.map((note) => {
+                      const isRowActive = activeScaleNoteId === note.id;
+                      return (
+                        <tr
+                          key={note.id}
+                          className={`scale-table-row ${isRowActive ? "active" : ""}`}
+                          onClick={() => playScaleNote(note)}
+                          title={`Klik untuk membunyikan ${note.name}`}
+                        >
+                          <td>
+                            <span
+                              className="scale-row-badge"
+                              style={{ backgroundColor: note.color }}
+                            >
+                              {note.name}
+                            </span>
+                          </td>
+                          <td>
+                            <strong className="mono">{note.notation.split(" ")[0]}</strong>
+                          </td>
+                          <td style={{ color: "var(--ink-muted)", fontSize: "11px" }}>
+                            {note.desc}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
 
-              <ul className="gesture-spec-list">
-                <li>
-                  <code>TELAPAK</code>
-                  <span>Aktifkan sensor &amp; mainkan akor mayor</span>
-                </li>
-                <li>
-                  <code>TELUNJUK</code>
-                  <span>Mainkan melodi mengikuti tinggi tangan</span>
-                </li>
-                <li>
-                  <code>2 JARI</code>
-                  <span>Pindah ke bank instrumen berikutnya</span>
-                </li>
-                <li>
-                  <code>KEPAL</code>
-                  <span>Hentikan seluruh keluaran suara synth</span>
-                </li>
-              </ul>
+              {/* Panel 2: Urutan Tangga Nada & Contoh Melodi */}
+              <div className="scale-panel">
+                <div className="scale-panel-header">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
+                  <span>Urutan Tangga Nada</span>
+                </div>
 
-              <button
-                type="button"
-                className="hw-button"
-                onClick={startMusicTutorial}
-              >
-                <IconSpeaker />
-                <span>Dengar Panduan Suara REYA</span>
-              </button>
-            </aside>
+                <div className="scale-flow-row">
+                  {SCALE_NOTES.map((note, idx) => (
+                    <Fragment key={note.id}>
+                      <button
+                        type="button"
+                        className={`scale-flow-pill ${activeScaleNoteId === note.id ? "active" : ""}`}
+                        style={{ backgroundColor: note.color }}
+                        onClick={() => playScaleNote(note)}
+                        title={`Klik untuk dengar ${note.name}`}
+                      >
+                        {note.name}
+                      </button>
+                      {idx < SCALE_NOTES.length - 1 && (
+                        <span className="scale-flow-arrow" aria-hidden="true">
+                          &rarr;
+                        </span>
+                      )}
+                    </Fragment>
+                  ))}
+                </div>
+
+                <div className="melody-box" style={{ marginTop: "10px" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "8px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        fontWeight: 700,
+                        fontSize: "12px",
+                      }}
+                    >
+                      <IconSpeaker />
+                      <span>Contoh Melodi</span>
+                    </div>
+                    <span
+                      className="mono"
+                      style={{ fontSize: "10px", color: "var(--ink-muted)" }}
+                    >
+                      9 NADA
+                    </span>
+                  </div>
+
+                  <div className="melody-notation-string">
+                    Do &ndash; Re &ndash; Mi &ndash; Fa &ndash; Sol &ndash; Fa &ndash; Mi &ndash; Re &ndash; Do
+                  </div>
+
+                  <button
+                    type="button"
+                    className={`hw-button ${playingMelody ? "primary" : ""}`}
+                    style={{ width: "100%", minHeight: "44px" }}
+                    onClick={playExampleMelody}
+                  >
+                    <IconSpeaker />
+                    <span>
+                      {playingMelody ? "Hentikan Melodi" : "Putar Contoh Melodi"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Panel 3: Keterangan */}
+              <div className="scale-panel">
+                <div className="scale-panel-header">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                  <span>Keterangan</span>
+                </div>
+
+                <ul className="scale-notes-list">
+                  <li>
+                    <span className="scale-check-icon" aria-hidden="true">
+                      &#x2713;
+                    </span>
+                    <span>
+                      <strong>Do sampai Sol</strong> = jumlah jari 1 sampai 5.
+                    </span>
+                  </li>
+                  <li>
+                    <span className="scale-check-icon" aria-hidden="true">
+                      &#x2713;
+                    </span>
+                    <span>
+                      <strong>La</strong> = Telunjuk + Jempol.
+                    </span>
+                  </li>
+                  <li>
+                    <span className="scale-check-icon" aria-hidden="true">
+                      &#x2713;
+                    </span>
+                    <span>
+                      <strong>Si</strong> = Telunjuk + Jempol + Kelingking.
+                    </span>
+                  </li>
+                  <li>
+                    <span className="scale-check-icon" aria-hidden="true">
+                      &#x2713;
+                    </span>
+                    <span>
+                      <strong>Do&apos;</strong> = Telunjuk + Kelingking.
+                    </span>
+                  </li>
+                  <li>
+                    <span className="scale-check-icon" aria-hidden="true">
+                      &#x2713;
+                    </span>
+                    <span>
+                      Gerakan dibaca kamera (hand tracking) lalu diubah menjadi nada secara real-time.
+                    </span>
+                  </li>
+                </ul>
+
+                <button
+                  type="button"
+                  className="hw-button"
+                  style={{ marginTop: "auto" }}
+                  onClick={() => setShowMatrixView((v) => !v)}
+                >
+                  <IconWave />
+                  <span>
+                    {showMatrixView
+                      ? "Sembunyikan Matriks 2D"
+                      : "Tampilkan Matriks Frekuensi 2D"}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Optional Collapsible 2D Matrix View */}
+            {showMatrixView && (
+              <div className="pitch-matrix-frame" style={{ marginTop: "14px" }}>
+                <div className="matrix-status-strip">
+                  <span className="mono">{lastPlayedLabel}</span>
+                  <span className="mono">
+                    KANAN: {handPositions.right?.note || "--"} | KIRI:{" "}
+                    {handPositions.left?.note || "--"}
+                  </span>
+                </div>
+
+                <div
+                  ref={pitchFieldRef}
+                  className="pitch-field"
+                  role="application"
+                  aria-label="Matriks 2D tinggi nada dan filter"
+                  onPointerDown={(event) => {
+                    pointerDownRef.current = true;
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    triggerMatrixCoordinate(
+                      (event.clientX - rect.left) / rect.width,
+                      (event.clientY - rect.top) / rect.height,
+                    );
+                  }}
+                  onPointerMove={(event) => {
+                    if (!pointerDownRef.current) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    triggerMatrixCoordinate(
+                      (event.clientX - rect.left) / rect.width,
+                      (event.clientY - rect.top) / rect.height,
+                    );
+                  }}
+                  onPointerUp={() => {
+                    pointerDownRef.current = false;
+                  }}
+                  onPointerCancel={() => {
+                    pointerDownRef.current = false;
+                  }}
+                >
+                  <div className="pitch-scale-labels">
+                    {scaleLabels.map((label, i) => (
+                      <div
+                        className="pitch-line"
+                        key={`${label}-${i}`}
+                        style={{
+                          top: `${(1 - i / Math.max(1, scaleLabels.length - 1)) * 100}%`,
+                        }}
+                      >
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {handPositions.right?.playing && (
+                    <div
+                      className="hand-node melody"
+                      style={{
+                        top: `${handPositions.right.y * 100}%`,
+                        left: `${(1 - handPositions.right.x) * 100}%`,
+                      }}
+                    >
+                      <strong>{handPositions.right.note}</strong>
+                      <small>LEAD</small>
+                    </div>
+                  )}
+
+                  {handPositions.left?.playing && (
+                    <div
+                      className="hand-node bass"
+                      style={{
+                        top: `${handPositions.left.y * 100}%`,
+                        left: `${(1 - handPositions.left.x) * 100}%`,
+                      }}
+                    >
+                      <strong>{handPositions.left.note}</strong>
+                      <small>BASS</small>
+                    </div>
+                  )}
+                </div>
+
+                <div className="matrix-footer">
+                  <span>SUMBU Y: FREKUENSI NADA (BAWAH = RENDAH, ATAS = TINGGI)</span>
+                  <span>SUMBU X: FILTER STEREO &amp; TONE BRIGHTNESS</span>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </div>

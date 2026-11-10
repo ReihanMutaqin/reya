@@ -33,6 +33,8 @@ test("server-renders the REYA application", async () => {
   assert.match(html, /<title>REYA[^<]*Robot AI Lokal Indonesia<\/title>/i);
   assert.match(html, /ROBOT AI LOKAL/i);
   assert.match(html, /Studio Suara/i);
+  assert.match(html, /Pemetaan Gerakan Tangan/i);
+  assert.match(html, /Ringkasan Pemetaan/i);
   assert.doesNotMatch(html, /Your site is taking shape/i);
 });
 
@@ -50,6 +52,8 @@ test("integrates Voicebox and Gemini Flash alongside Natural Indo", async () => 
   assert.match(page, /gemini-flash-latest/);
   assert.match(page, /Mainkan Musik/);
   assert.match(page, /handleHandMusic/);
+  assert.match(page, /SCALE_NOTES/);
+  assert.match(page, /playAcousticPiano/);
   assert.match(layout, /title:\s*"REYA : Robot AI Lokal Indonesia"/);
   assert.match(server, /engine:\s*Literal\["supertonic",\s*"qwen",\s*"voicebox"\]\s*=\s*"supertonic"/);
   assert.match(server, /speaker:\s*str\s*=\s*"F2"/);
