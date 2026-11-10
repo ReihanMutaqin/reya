@@ -2966,18 +2966,14 @@ export default function Home() {
           if (!enchorAudioRef.current) {
             enchorAudioRef.current = new Audio();
           }
-          const isPreviewStream = sel.md5.startsWith("itunes-");
+          enchorAudioRef.current.loop = false;
           enchorAudioRef.current.src = streamUrl;
           enchorAudioRef.current.volume = 0.9;
-          // Loop backing track seamlessly if it's a global preview stream while full lyrics continue
-          enchorAudioRef.current.loop = isPreviewStream;
           enchorAudioRef.current.onended = () => {
-            if (!isPreviewStream) {
-              setEnchorAudioPlaying(false);
-              setPlayingSong(false);
-              setSingingMode(false);
-              setSingingLyric("");
-            }
+            setEnchorAudioPlaying(false);
+            setPlayingSong(false);
+            setSingingMode(false);
+            setSingingLyric("");
           };
           void enchorAudioRef.current
             .play()

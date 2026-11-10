@@ -550,6 +550,74 @@ function parseMidiVocalsAndNotes(mid: Buffer): {
   return { lyrics, notes };
 }
 
+async function fetchFullTrackAudioUrl(
+  title: string,
+  artist: string,
+): Promise<string | null> {
+  try {
+    const words = `${title} ${artist}`
+      .toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    const qStr = `(${words.join(" AND ")}) AND mediatype:audio`;
+    const searchUrl = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(
+      qStr,
+    )}&fl[]=identifier,title,creator&rows=8&output=json`;
+
+    const res = await fetch(searchUrl, {
+      signal: AbortSignal.timeout(3500),
+    });
+    if (!res.ok) return null;
+    const d = (await res.json()) as {
+      response?: {
+        docs?: Array<{ identifier: string; title?: string; creator?: string }>;
+      };
+    };
+    const docs = d.response?.docs || [];
+    const tNorm = title.toLowerCase();
+    const aNorm = artist.toLowerCase();
+
+    // Prefer docs where both song title and artist appear
+    const sorted = docs.filter((item) => {
+      const text = `${item.title || ""} ${item.creator || ""}`.toLowerCase();
+      return (
+        text.includes(tNorm) &&
+        (text.includes(aNorm) ||
+          aNorm.split(/\s+/).some((w) => w.length > 3 && text.includes(w)))
+      );
+    });
+
+    for (const doc of sorted) {
+      const metaRes = await fetch(
+        `https://archive.org/metadata/${encodeURIComponent(doc.identifier)}`,
+        { signal: AbortSignal.timeout(3500) },
+      );
+      if (!metaRes.ok) continue;
+      const meta = (await metaRes.json()) as {
+        files?: Array<{ name: string; length?: string | number }>;
+      };
+      const candidate = meta.files?.find(
+        (f) =>
+          (f.name.endsWith(".m4a") ||
+            f.name.endsWith(".mp3") ||
+            f.name.endsWith(".ogg")) &&
+          Number(f.length || 0) > 120 &&
+          Number(f.length || 0) < 660,
+      );
+      if (candidate) {
+        return `https://archive.org/download/${encodeURIComponent(
+          doc.identifier,
+        )}/${encodeURIComponent(candidate.name)}`;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const action = searchParams.get("action") || "search";
@@ -794,6 +862,14 @@ export async function GET(request: Request) {
     let notes: EnchorNoteItem[] = [];
     let audioUrl: string | null = chosen.directAudioUrl ?? null;
     let vocalAudioUrl: string | null = chosen.directAudioUrl ?? null;
+
+    if (chosen.source === "global") {
+      const fullAudio = await fetchFullTrackAudioUrl(chosen.name, chosen.artist);
+      if (fullAudio) {
+        audioUrl = fullAudio;
+        vocalAudioUrl = fullAudio;
+      }
+    }
 
     if (chosen.source === "enchor" && /^[a-f0-9]{32}$/i.test(chosen.md5)) {
       const sngIndex = await fetchSngIndex(chosen.md5);
