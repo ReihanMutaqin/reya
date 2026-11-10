@@ -1,24 +1,26 @@
 import { NextResponse } from "next/server";
 
-const GEMINI_API_KEY =
+const GEMINI_API_KEY = (
   process.env.GEMINI_API_KEY ||
   process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
-  "";
+  ""
+).trim();
 
 // Fast models prioritized for snappy conversational chat
 const CHAT_MODELS = [
-  process.env.GEMINI_MODEL,
   "gemini-3-flash-preview",
-  "gemini-flash-latest",
+  process.env.GEMINI_MODEL,
   "gemini-3.8-flash",
+  "gemini-flash-latest",
 ].filter(Boolean) as string[];
 
 const SYSTEM_PROMPT =
-  "Kamu adalah REYA, robot AI perempuan yang ceria, hangat, ramah, lucu, dan pintar. " +
+  "Kamu adalah REYA, robot AI perempuan yang ceria, hangat, ramah, lucu, dan pintar pendamping belajar musik dan obrolan. " +
   "Aturan bicara REYA: " +
   "1. Selalu gunakan Bahasa Indonesia percakapan yang santai, luwes, dan akrab (gunakan kata 'aku' dan 'kamu'). " +
   "2. Jangan gunakan bahasa kaku seperti 'Anda', 'Saya siap membantu', atau 'Sebagai AI'. " +
-  "3. Jawab sangat singkat, cepat, padat, dan ekspresif (1 sampai 2 kalimat pendek) layaknya ngobrol langsung lewat suara.";
+  "3. Jawab sangat singkat, cepat, padat, dan ekspresif (1 sampai 2 kalimat pendek) layaknya ngobrol langsung lewat suara. " +
+  "4. Jika pengguna meminta memainkan lagu (seperti 'Ibu Kita Kartini' atau 'melodi'), sambut dengan antusias dan katakan bahwa kamu memainkannya sekarang lewat instrumen!";
 
 function cleanReply(raw: string): string {
   return raw
@@ -50,11 +52,31 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Pesan kosong" }, { status: 400 });
     }
 
-    if (!GEMINI_API_KEY) {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY belum diatur di environment" },
-        { status: 503 },
-      );
+    const lastUserText = (messages[messages.length - 1]?.content || "").toLowerCase();
+
+    // Direct instant recognition for song requests
+    if (
+      lastUserText.includes("kartini") ||
+      (lastUserText.includes("mainkan") && lastUserText.includes("ibu"))
+    ) {
+      return NextResponse.json({
+        message:
+          "Tentu! Ini lagu Ibu Kita Kartini yang indah, aku mainkan pakai instrumen untukmu sekarang ya! ♪",
+        model: "reya-music-engine",
+        provider: "reya-native",
+      });
+    }
+
+    if (
+      lastUserText.includes("melodi") ||
+      lastUserText.includes("tangga nada")
+    ) {
+      return NextResponse.json({
+        message:
+          "Siap! Aku mainkan contoh tangga nada melodi Do Re Mi Fa Sol sekarang ya! ♪",
+        model: "reya-music-engine",
+        provider: "reya-native",
+      });
     }
 
     const historyText = messages
@@ -64,72 +86,80 @@ export async function POST(request: Request) {
 
     const fullPrompt = `${SYSTEM_PROMPT}\n\nPercakapan:\n${historyText}\nREYA:`;
 
-    // Try fast conversational models in sequence with strict 4.5s timeout per model
-    for (const model of CHAT_MODELS) {
-      try {
-        const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-goog-api-key": GEMINI_API_KEY,
-            },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    {
-                      text: fullPrompt,
-                    },
-                  ],
-                },
-              ],
-              generationConfig: {
-                maxOutputTokens: 300,
-                temperature: 0.7,
-                topP: 0.9,
-                thinkingConfig: { thinkingBudget: 0 },
+    // Try fast conversational models if API key is provided
+    if (GEMINI_API_KEY) {
+      for (const model of CHAT_MODELS) {
+        try {
+          const geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-goog-api-key": GEMINI_API_KEY,
               },
-            }),
-            signal: AbortSignal.timeout(4500),
-          },
-        );
+              body: JSON.stringify({
+                contents: [
+                  {
+                    parts: [
+                      {
+                        text: fullPrompt,
+                      },
+                    ],
+                  },
+                ],
+                generationConfig: {
+                  maxOutputTokens: 300,
+                  temperature: 0.7,
+                  topP: 0.9,
+                  thinkingConfig: { thinkingBudget: 0 },
+                },
+              }),
+              signal: AbortSignal.timeout(4500),
+            },
+          );
 
-        if (geminiRes.ok) {
-          const data = (await geminiRes.json()) as {
-            candidates?: Array<{
-              content?: { parts?: Array<{ text?: string }> };
-            }>;
-          };
-          const rawText =
-            data.candidates?.[0]?.content?.parts
-              ?.map((p) => p.text ?? "")
-              .join("") ?? "";
-          const cleaned = cleanReply(rawText);
-          if (cleaned) {
-            return NextResponse.json({
-              message: cleaned,
-              model,
-              provider: "gemini-argon",
-            });
+          if (geminiRes.ok) {
+            const data = (await geminiRes.json()) as {
+              candidates?: Array<{
+                content?: { parts?: Array<{ text?: string }> };
+              }>;
+            };
+            const rawText =
+              data.candidates?.[0]?.content?.parts
+                ?.map((p) => p.text ?? "")
+                .join("") ?? "";
+            const cleaned = cleanReply(rawText);
+            if (cleaned) {
+              return NextResponse.json({
+                message: cleaned,
+                model,
+                provider: "gemini-argon",
+              });
+            }
           }
+        } catch {
+          // Continue to next fast model
+          continue;
         }
-      } catch {
-        // Continue to next fast model
-        continue;
       }
     }
 
     // Fast fallback if all remote models hit temporary spike
-    const lastUserText = (messages[messages.length - 1]?.content || "").toLowerCase();
     let fallbackText = INSTANT_FALLBACKS[0];
-    if (lastUserText.includes("musik") || lastUserText.includes("nada") || lastUserText.includes("lagu")) {
-      fallbackText = "Ayo main musik! Angkat tanganmu ke arah kamera untuk membunyikan tangga nada Do Re Mi Fa Sol La Si Do!";
+    if (
+      lastUserText.includes("musik") ||
+      lastUserText.includes("nada") ||
+      lastUserText.includes("lagu")
+    ) {
+      fallbackText =
+        "Ayo main musik! Angkat tanganmu ke arah kamera untuk membunyikan tangga nada Do Re Mi Fa Sol La Si Do!";
     } else if (lastUserText.includes("siapa") || lastUserText.includes("kenalan")) {
-      fallbackText = "Aku REYA, robot AI cerdas pendamping belajarmu yang bisa ngobrol santai dan bermain instrumen musik akustik!";
+      fallbackText =
+        "Aku REYA, robot AI cerdas pendamping belajarmu yang bisa ngobrol santai dan bermain instrumen musik akustik!";
     } else {
-      fallbackText = INSTANT_FALLBACKS[Math.floor(Math.random() * INSTANT_FALLBACKS.length)];
+      fallbackText =
+        INSTANT_FALLBACKS[Math.floor(Math.random() * INSTANT_FALLBACKS.length)];
     }
 
     return NextResponse.json({
