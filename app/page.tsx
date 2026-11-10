@@ -2270,7 +2270,7 @@ export default function Home() {
 
   // Plays audio untouched: pitch-shifting via playbackRate was what made voices sound robotic.
   const playAudioBlob = useCallback(
-    async (blob: Blob): Promise<boolean> => {
+    async (blob: Blob, onEnded?: () => void): Promise<boolean> => {
       try {
         if (!blob || blob.size < 100) return false;
         const AudioCtx =
@@ -2293,6 +2293,11 @@ export default function Home() {
 
         source.onended = () => {
           handleSpeechEnd();
+          try {
+            onEnded?.();
+          } catch {
+            // Callback error
+          }
           void ctx.close();
         };
 
@@ -2411,7 +2416,7 @@ export default function Home() {
   );
 
   const playServerTTS = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (text: string, onEnded?: () => void): Promise<boolean> => {
       try {
         const clean = text.replace(/[*_#`~]/g, "").trim();
         if (!clean) return false;
@@ -2420,13 +2425,14 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             text: clean.slice(0, 500),
-            engine: voiceEngine,
+            engine: voiceboxOnline ? "voicebox" : "gemini",
+            voicebox_online: voiceboxOnline,
             profile_id: voiceboxProfileId || "default",
             speaker: voiceProfile,
             instruction: voiceStyle,
             voicebox_url: voiceboxUrl,
           }),
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(6000),
         });
         if (!res.ok) return false;
         const provider = res.headers.get("X-Voice-Provider");
@@ -2434,25 +2440,26 @@ export default function Home() {
           setVoiceboxOnline(true);
         }
         const blob = await res.blob();
-        return await playAudioBlob(blob);
+        return await playAudioBlob(blob, onEnded);
       } catch {
         return false;
       }
     },
     [
       playAudioBlob,
-      voiceEngine,
       voiceProfile,
       voiceStyle,
+      voiceboxOnline,
       voiceboxProfileId,
       voiceboxUrl,
     ],
   );
 
   const browserSpeak = useCallback(
-    async (text: string) => {
+    async (text: string, onEnded?: () => void) => {
       if (!("speechSynthesis" in window)) {
         handleSpeechEnd();
+        onEnded?.();
         return;
       }
       window.speechSynthesis.cancel();
@@ -2488,67 +2495,57 @@ export default function Home() {
         isSpeakingRef.current = true;
         setSpeaking(true);
       };
-      utterance.onend = handleSpeechEnd;
-      utterance.onerror = handleSpeechEnd;
+      utterance.onend = () => {
+        handleSpeechEnd();
+        try {
+          onEnded?.();
+        } catch {
+          // Callback error
+        }
+      };
+      utterance.onerror = () => {
+        handleSpeechEnd();
+        try {
+          onEnded?.();
+        } catch {
+          // Callback error
+        }
+      };
       window.speechSynthesis.speak(utterance);
     },
     [handleSpeechEnd],
   );
 
   const speak = useCallback(
-    async (text: string) => {
-      // 1. Server-side /api/tts first (proxies jamiepine/voicebox without CORS + Argon Gemini Neural Audio TTS)
-      if (voiceEngine !== "browser") {
-        const serverOk = await playServerTTS(text);
-        if (serverOk) return;
+    async (text: string, onEnded?: () => void) => {
+      // 1. Instant Web Speech Synthesis when browser engine is selected (0ms delay)
+      if (voiceEngine === "browser") {
+        void browserSpeak(text, onEnded);
+        return;
       }
 
-      // 2. Direct jamiepine/voicebox synthesis from browser (if running locally while browsing remote host)
-      if (voiceEngine === "voicebox" || voiceboxOnline) {
+      // 2. Fast Server-side /api/tts (prioritizes low-latency neural audio + local Gadis / Google Indo)
+      const serverOk = await playServerTTS(text, onEnded);
+      if (serverOk) return;
+
+      // 3. Direct jamiepine/voicebox synthesis ONLY if confirmed running locally
+      if (voiceboxOnline) {
         const vbOk = await playVoiceboxDirect(text);
-        if (vbOk) return;
-      }
-
-      // 3. Local Python AI Server (Supertonic F2 / Qwen / Voicebox proxy)
-      if (voiceEngine !== "browser") {
-        try {
-          const response = await fetch(`${API_BASE}/api/tts`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              text,
-              engine: voiceEngine,
-              speaker:
-                voiceEngine === "voicebox" ? voiceboxProfileId : voiceProfile,
-              instruction: voiceStyle,
-              language: "Auto",
-              voicebox_url: voiceboxUrl,
-            }),
-            signal: AbortSignal.timeout(7000),
-          });
-          if (response.ok) {
-            const blob = await response.blob();
-            if (await playAudioBlob(blob)) return;
-          }
-        } catch {
-          // Fall through to browser speech
+        if (vbOk) {
+          onEnded?.();
+          return;
         }
       }
 
-      // 4. Browser SpeechSynthesis fallback
-      void browserSpeak(text);
+      // 4. Instant browser speech fallback (guarantees voice output without dead air)
+      void browserSpeak(text, onEnded);
     },
     [
       browserSpeak,
-      playAudioBlob,
       playServerTTS,
       playVoiceboxDirect,
       voiceEngine,
-      voiceProfile,
-      voiceStyle,
       voiceboxOnline,
-      voiceboxProfileId,
-      voiceboxUrl,
     ],
   );
 
@@ -2608,10 +2605,15 @@ export default function Home() {
         const assistantMessage: Message = { role: "assistant", content: answer };
         setMessages((current) => [...current, assistantMessage]);
         setThinking(false);
-        void speak(answer);
-        window.setTimeout(() => {
-          playKartiniSong();
-        }, 1200);
+        let started = false;
+        const triggerSong = () => {
+          if (!started) {
+            started = true;
+            playKartiniSong();
+          }
+        };
+        void speak(answer, triggerSong);
+        window.setTimeout(triggerSong, 3800);
         return;
       }
 
@@ -2625,10 +2627,15 @@ export default function Home() {
         const assistantMessage: Message = { role: "assistant", content: answer };
         setMessages((current) => [...current, assistantMessage]);
         setThinking(false);
-        void speak(answer);
-        window.setTimeout(() => {
-          playExampleMelody();
-        }, 1200);
+        let started = false;
+        const triggerMelody = () => {
+          if (!started) {
+            started = true;
+            playExampleMelody();
+          }
+        };
+        void speak(answer, triggerMelody);
+        window.setTimeout(triggerMelody, 3400);
         return;
       }
 

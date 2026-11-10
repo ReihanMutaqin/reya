@@ -10,12 +10,16 @@ const DEFAULT_VOICEBOX_URL =
   "http://127.0.0.1:17493";
 
 // Models supporting high-quality Gemini Neural TTS with AUDIO modality
+// flash-lite is placed first for lowest conversational latency
 const GEMINI_TTS_MODELS = [
-  "gemini-3.8-flash-tts",
   "gemini-3.8-flash-lite-tts",
   "gemini-3.1-flash-tts-preview",
   "gemini-2.5-flash-preview-tts",
+  "gemini-3.8-flash-tts",
 ];
+
+// Temporarily skip models that exceeded free-tier quota (429) to avoid latency on subsequent calls
+const exhaustedModels = new Map<string, number>();
 
 // LRU cache for synthesized speech to provide instant playback and prevent quota exhaustion
 const ttsCache = new Map<string, { buffer: ArrayBuffer; contentType: string }>();
@@ -62,7 +66,7 @@ async function resolveVoiceboxProfileId(
   }
   try {
     const res = await fetch(`${baseUrl}/profiles`, {
-      signal: AbortSignal.timeout(1800),
+      signal: AbortSignal.timeout(350),
     });
     if (!res.ok) return undefined;
     const data = (await res.json()) as unknown;
@@ -91,6 +95,17 @@ async function tryVoiceboxTTS(
   instruct?: string,
 ): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
   const baseUrl = (voiceboxUrl || DEFAULT_VOICEBOX_URL).replace(/\/+$/, "");
+
+  // Instant reachability check: if port is not actively listening, skip immediately
+  try {
+    const ping = await fetch(`${baseUrl}/profiles`, {
+      signal: AbortSignal.timeout(350),
+    });
+    if (!ping.ok) return null;
+  } catch {
+    return null;
+  }
+
   const resolvedProfileId = await resolveVoiceboxProfileId(baseUrl, profileId);
 
   // 1. OpenAI-compatible endpoint in jamiepine/voicebox (/v1/audio/speech)
@@ -253,6 +268,9 @@ async function tryGeminiNeuralTTS(
 
   // Iterate over available Gemini TTS models in sequence
   for (const model of GEMINI_TTS_MODELS) {
+    if ((exhaustedModels.get(model) || 0) > Date.now()) {
+      continue;
+    }
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const res = await fetch(url, {
@@ -279,11 +297,13 @@ async function tryGeminiNeuralTTS(
             },
           },
         }),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(3500),
       });
 
       if (!res.ok) {
-        // Quota exceeded (429) or model busy, failover to next model
+        if (res.status === 429) {
+          exhaustedModels.set(model, Date.now() + 120000);
+        }
         continue;
       }
 
@@ -346,14 +366,15 @@ async function tryLocalEdgeNeuralTTS(
   if (cached) return cached;
 
   const pyCode = `
-import asyncio, sys, edge_tts
+import asyncio, sys, os, tempfile, edge_tts
 async def run():
+    tmp = tempfile.mktemp(suffix='.mp3')
     comm = edge_tts.Communicate(sys.argv[1], 'id-ID-GadisNeural')
-    chunks = []
-    async for chunk in comm.stream():
-        if chunk['type'] == 'audio':
-            chunks.append(chunk['data'])
-    sys.stdout.buffer.write(b''.join(chunks))
+    await comm.save(tmp)
+    data = open(tmp, 'rb').read()
+    try: os.remove(tmp)
+    except: pass
+    sys.stdout.buffer.write(data)
 asyncio.run(run())
 `;
 
@@ -361,7 +382,7 @@ asyncio.run(run())
     const { stdout } = await execFileAsync("python", ["-c", pyCode, cleanText], {
       encoding: "buffer",
       maxBuffer: 15 * 1024 * 1024,
-      timeout: 10000,
+      timeout: 4500,
     });
 
     if (stdout && stdout.length > 500) {
@@ -494,6 +515,7 @@ export async function POST(request: Request) {
       speaker?: string;
       instruction?: string;
       voicebox_url?: string;
+      voicebox_online?: boolean;
     };
     const text = (body.text || "").trim();
     if (!text) {
@@ -502,9 +524,10 @@ export async function POST(request: Request) {
 
     const profileId = body.profile_id || body.speaker || "default";
     const voiceboxUrl = body.voicebox_url || DEFAULT_VOICEBOX_URL;
+    const voiceboxOnline = body.voicebox_online ?? (body.engine === "voicebox" ? undefined : false);
 
-    // 1. Try jamiepine/voicebox local studio server first when selected
-    if (!body.engine || body.engine === "voicebox") {
+    // 1. Try jamiepine/voicebox local studio server ONLY when selected and online
+    if (body.engine === "voicebox" && voiceboxOnline !== false) {
       const vbAudio = await tryVoiceboxTTS(
         text,
         voiceboxUrl,
