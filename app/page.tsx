@@ -1378,11 +1378,35 @@ function IconTheme({ dark }: { dark: boolean }) {
   );
 }
 
+type RobotInteractionType =
+  | "poke"
+  | "tickle"
+  | "dizzy"
+  | "headpat"
+  | "snack"
+  | "dance";
+
+const SLEEP_THOUGHTS = [
+  "Zzz... hoamzz...",
+  "Zzz... mimpi main piano ♪",
+  "Zzz... satu lagu lagi...",
+  "Nyam nyam... zzz...",
+  "Zzz... jangan cabut baterai...",
+];
+
+const HUM_THOUGHTS = [
+  "La la la~ ♪",
+  "Do Re Mi~ ♫",
+  "Hmm-hmm~ asyik ♪",
+  "Lagi mikir melodi ♪",
+];
+
 function RobotCRTUnit({
   speaking,
   listening,
   thinking,
   mood,
+  musicActive = false,
   lastActivity = 0,
   onPoke,
 }: {
@@ -1390,33 +1414,71 @@ function RobotCRTUnit({
   listening: boolean;
   thinking: boolean;
   mood: number;
+  musicActive?: boolean;
   lastActivity?: number;
-  onPoke?: () => void;
+  onPoke?: (kind?: RobotInteractionType) => void;
 }) {
   const [idleSeconds, setIdleSeconds] = useState(0);
   const [blinking, setBlinking] = useState(false);
-  const [poked, setPoked] = useState(false);
+  const [reaction, setReaction] = useState<RobotInteractionType | null>(null);
   const [gaze, setGaze] = useState({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
   const lastActiveRef = useRef(lastActivity);
   const screenRef = useRef<HTMLDivElement>(null);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const reactionTimerRef = useRef<number | null>(null);
+  const clickComboRef = useRef<{ count: number; lastAt: number }>({
+    count: 0,
+    lastAt: 0,
+  });
+  const rubAccumRef = useRef<{ lastX: number; dist: number }>({
+    lastX: 0,
+    dist: 0,
+  });
 
-  let idleState: "active" | "curious" | "yawn" | "sleep" = "active";
-  if (poked) {
+  type IdleMode =
+    | "active"
+    | "wink"
+    | "hum"
+    | "look_around"
+    | "stretch"
+    | "yawn"
+    | "sleep";
+
+  let idleState: IdleMode = "active";
+  if (reaction || speaking || listening || thinking || musicActive) {
     idleState = "active";
-  } else if (speaking || listening || thinking) {
-    idleState = "active";
-  } else if (idleSeconds >= 28) {
+  } else if (idleSeconds >= 30) {
     idleState = "sleep";
-  } else if (idleSeconds >= 14) {
+  } else if (idleSeconds >= 23) {
     idleState = "yawn";
-  } else if (idleSeconds >= 7) {
-    idleState = "curious";
+  } else if (idleSeconds >= 18) {
+    idleState = "stretch";
+  } else if (idleSeconds >= 13) {
+    idleState = "look_around";
+  } else if (idleSeconds >= 8) {
+    idleState = "hum";
+  } else if (idleSeconds >= 4) {
+    idleState = "wink";
   }
+
+  const triggerReaction = useCallback(
+    (kind: RobotInteractionType, durationMs = 2800) => {
+      if (reactionTimerRef.current) {
+        window.clearTimeout(reactionTimerRef.current);
+      }
+      setReaction(kind);
+      setIdleSeconds(0);
+      onPoke?.(kind);
+      reactionTimerRef.current = window.setTimeout(() => {
+        setReaction(null);
+      }, durationMs);
+    },
+    [onPoke],
+  );
 
   useEffect(() => {
     const computeGazeFromPoint = (clientX: number, clientY: number) => {
-      if (idleState === "sleep") {
+      if (idleState === "sleep" || reaction === "dizzy") {
         setGaze({ eyeX: 0, eyeY: 0, pupilX: 0, pupilY: 0 });
         return;
       }
@@ -1425,7 +1487,7 @@ function RobotCRTUnit({
       if (!screenEl) return;
       const rect = screenEl.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height * 0.42;
+      const centerY = rect.top + rect.height * 0.44;
 
       const dx = clientX - centerX;
       const dy = clientY - centerY;
@@ -1437,13 +1499,13 @@ function RobotCRTUnit({
       }
 
       const angle = Math.atan2(dy * 1.35, dx);
-      const factor = Math.tanh(dist / 160);
+      const factor = Math.tanh(dist / 155);
 
       const maxEyeX = 11.5;
       const maxEyeY = 9.5;
       const maxPupilX = 7.0;
       const maxPupilY =
-        idleState === "yawn" ? 3.0 : idleState === "curious" ? 6.8 : 8.5;
+        idleState === "yawn" ? 3.0 : idleState === "hum" ? 6.8 : 8.5;
 
       const eyeX = Math.cos(angle) * factor * maxEyeX;
       const eyeY = Math.sin(angle) * factor * maxEyeY;
@@ -1471,7 +1533,7 @@ function RobotCRTUnit({
       if (lastPointerRef.current) {
         computeGazeFromPoint(
           lastPointerRef.current.x,
-          lastPointerRef.current.y
+          lastPointerRef.current.y,
         );
       }
     };
@@ -1492,11 +1554,11 @@ function RobotCRTUnit({
       window.removeEventListener("scroll", handleScroll);
       document.removeEventListener("mouseleave", handleMouseLeave);
     };
-  }, [idleState]);
+  }, [idleState, reaction]);
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (speaking || listening || thinking) {
+      if (speaking || listening || thinking || musicActive) {
         setIdleSeconds(0);
       } else {
         setIdleSeconds((prev) => {
@@ -1509,70 +1571,184 @@ function RobotCRTUnit({
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [speaking, listening, thinking, lastActivity]);
+  }, [speaking, listening, thinking, musicActive, lastActivity]);
 
   useEffect(() => {
     const blinkInterval = setInterval(() => {
       setBlinking(true);
       window.setTimeout(() => setBlinking(false), 160);
-    }, 3600);
+    }, 3400);
     return () => clearInterval(blinkInterval);
   }, []);
 
+  useEffect(
+    () => () => {
+      if (reactionTimerRef.current) {
+        window.clearTimeout(reactionTimerRef.current);
+      }
+    },
+    [],
+  );
+
   const handleScreenClick = () => {
-    setPoked(true);
-    setIdleSeconds(0);
-    onPoke?.();
-    window.setTimeout(() => setPoked(false), 2400);
+    const now = performance.now();
+    const elapsed = now - clickComboRef.current.lastAt;
+    const nextCount = elapsed < 900 ? clickComboRef.current.count + 1 : 1;
+    clickComboRef.current = { count: nextCount, lastAt: now };
+
+    if (nextCount >= 5) {
+      clickComboRef.current.count = 0;
+      triggerReaction("dizzy", 3200);
+    } else if (nextCount >= 2) {
+      triggerReaction("tickle", 2600);
+    } else {
+      triggerReaction("poke", 2400);
+    }
   };
+
+  const handleHeadRubMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const prevX = rubAccumRef.current.lastX;
+    if (prevX !== 0) {
+      rubAccumRef.current.dist += Math.abs(e.clientX - prevX);
+      if (rubAccumRef.current.dist > 55 && reaction !== "headpat") {
+        rubAccumRef.current.dist = 0;
+        triggerReaction("headpat", 3000);
+      }
+    }
+    rubAccumRef.current.lastX = e.clientX;
+  };
+
+  const isDancing = reaction === "dance" || musicActive;
+  const showHearts = reaction === "headpat" || reaction === "tickle";
+  const showNotes = idleState === "hum" || isDancing || speaking;
+  const showSparkles = reaction === "snack" || reaction === "poke";
 
   let statusLabel = "STBY // REYA SIAP";
   let thoughtBubble = "";
 
   if (listening) {
     statusLabel = "REC // MENDENGARKAN";
-    thoughtBubble = "Aku dengar...";
+    thoughtBubble = "Aku dengar kamu...";
   } else if (thinking) {
     statusLabel = "PROC // GEMINI FLASH";
-    thoughtBubble = "Sedang berpikir...";
+    thoughtBubble = "Hmm, mikir bentar...";
   } else if (speaking) {
     statusLabel = "OUT // SUARA CERIA";
     thoughtBubble = "Ngobrol bareng ♪";
-  } else if (poked) {
-    statusLabel = "HALO! // SENANG DISENTUH!";
-    thoughtBubble = "Ehh, halo! (*^^*)";
+  } else if (reaction === "headpat") {
+    statusLabel = "LOVE // SENANG DIELUS ♥";
+    thoughtBubble = "Hehe nyaman dielus~ ♥";
+  } else if (reaction === "tickle") {
+    statusLabel = "HAHA // KEGELIAN! >v<";
+    thoughtBubble = "Hahaha geli tau! >v<";
+  } else if (reaction === "dizzy") {
+    statusLabel = " OOPS // PUSING MUTER @_@";
+    thoughtBubble = "Aduh pusing dikit @_@";
+  } else if (reaction === "snack") {
+    statusLabel = "YUM // CAS ENERGI 100%";
+    thoughtBubble = "Nom nom! Baterai penuh!";
+  } else if (reaction === "dance") {
+    statusLabel = "DANCE // GOYANG KONSER ♪";
+    thoughtBubble = "Asyik! Goyang bareng ♫";
+  } else if (reaction === "poke") {
+    statusLabel = "HALO! // SIAP BERMAIN!";
+    thoughtBubble = "Cilukba! Ayo main! (*^^*)";
+  } else if (musicActive) {
+    statusLabel = "JAM // IKUT IRAMA MUSIK ♫";
+    thoughtBubble = "Merdu banget nadanya ♪";
   } else if (idleState === "sleep") {
     statusLabel = "ZZZ // TIDUR NYENYAK...";
-    thoughtBubble = "Zzz... hoamzz...";
+    thoughtBubble =
+      SLEEP_THOUGHTS[Math.floor(idleSeconds / 5) % SLEEP_THOUGHTS.length];
   } else if (idleState === "yawn") {
     statusLabel = "HOAMZZZ // NGANTUK DIKIT~";
     thoughtBubble = "Hoaaamzzz... (*~*)";
-  } else if (idleState === "curious") {
+  } else if (idleState === "stretch") {
+    statusLabel = "IDLE // NGULET DULU~";
+    thoughtBubble = "Hup! Ngulet biar segar~";
+  } else if (idleState === "look_around") {
+    statusLabel = "IDLE // TENGOK KANAN-KIRI";
+    thoughtBubble = "Lagi ngapain tuh? 👀";
+  } else if (idleState === "hum") {
     statusLabel = "IDLE // BERSENANDUNG ♪";
-    thoughtBubble = "Lagi mikir melodi ♪";
+    thoughtBubble =
+      HUM_THOUGHTS[Math.floor(idleSeconds / 2) % HUM_THOUGHTS.length];
+  } else if (idleState === "wink") {
+    statusLabel = "IDLE // SAPA MANIS ;3";
+    thoughtBubble = "Jangan lupa senyum ya! ;3";
   }
+
+  const autoLookX =
+    idleState === "look_around" && gaze.eyeX === 0
+      ? idleSeconds % 2 === 0
+        ? -8
+        : 8
+      : gaze.eyeX;
+  const autoLookY =
+    idleState === "stretch" && gaze.eyeY === 0 ? -4 : gaze.eyeY;
+
+  const eyeShiftX = Math.round(autoLookX * 4.5) / 10;
+  const eyeShiftY = Math.round(autoLookY * 4.5) / 10;
 
   return (
     <div
       className={`crt-housing mood-${mood} ${speaking ? "is-speaking" : ""} ${
         thinking ? "is-thinking" : ""
-      } ${idleState === "sleep" ? "is-sleeping" : "is-breathing"}`}
+      } ${idleState === "sleep" ? "is-sleeping" : "is-breathing"} ${
+        isDancing ? "is-dancing" : ""
+      } ${reaction ? `reaction-${reaction}` : `idle-${idleState}`}`}
     >
+      {/* Top Robot Head Accessories: Cute Cat-Robot Ears & Glowing Antenna */}
+      <div
+        className="robot-head-top"
+        role="button"
+        tabIndex={0}
+        onPointerMove={handleHeadRubMove}
+        onPointerLeave={() => {
+          rubAccumRef.current = { lastX: 0, dist: 0 };
+        }}
+        onClick={() => triggerReaction("headpat", 2800)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            triggerReaction("headpat", 2800);
+          }
+        }}
+        title="Usap atau klik kepala REYA untuk mengelus!"
+      >
+        <div className="robot-ear left-ear" aria-hidden="true">
+          <span className="ear-inner" />
+        </div>
+        <div className="robot-antenna" aria-hidden="true">
+          <span className="antenna-bulb" />
+          <span className="antenna-stem" />
+        </div>
+        <div className="robot-ear right-ear" aria-hidden="true">
+          <span className="ear-inner" />
+        </div>
+      </div>
+
+      {/* Cute Side Earphone Pods */}
+      <span className="robot-side-pod left-pod" aria-hidden="true" />
+      <span className="robot-side-pod right-pod" aria-hidden="true" />
+
       <div
         ref={screenRef}
         className="crt-screen"
         onClick={handleScreenClick}
-        title="Klik layar CRT untuk menyapa atau membangunkan REYA!"
+        title="Klik layar untuk mengajak bercanda (klik berkali-kali untuk menggelitik!)"
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") handleScreenClick();
         }}
       >
+        <span className="crt-visor-glare" aria-hidden="true" />
+
         {thoughtBubble && (
           <div
             className={`crt-thought-bubble is-${idleState} ${
-              poked ? "is-poked" : ""
+              reaction ? `is-react-${reaction}` : ""
             }`}
           >
             <span>{thoughtBubble}</span>
@@ -1580,27 +1756,49 @@ function RobotCRTUnit({
         )}
 
         {idleState === "sleep" && (
-          <div className="crt-zzz-box" aria-hidden="true">
-            <span className="zzz-item z1">z</span>
-            <span className="zzz-item z2">Z</span>
-            <span className="zzz-item z3">Z</span>
-          </div>
+          <>
+            <div className="crt-zzz-box" aria-hidden="true">
+              <span className="zzz-item z1">z</span>
+              <span className="zzz-item z2">Z</span>
+              <span className="zzz-item z3">Z</span>
+            </div>
+            <div className="crt-sleep-bubble" aria-hidden="true" />
+          </>
         )}
 
-        {idleState === "curious" && (
+        {showNotes && (
           <div className="crt-notes-box" aria-hidden="true">
             <span className="note-item n1">♪</span>
             <span className="note-item n2">♫</span>
           </div>
         )}
 
+        {showHearts && (
+          <div className="crt-hearts-box" aria-hidden="true">
+            <span className="heart-item h1">♥</span>
+            <span className="heart-item h2">♥</span>
+            <span className="heart-item h3">♥</span>
+          </div>
+        )}
+
+        {showSparkles && (
+          <div className="crt-sparkles-box" aria-hidden="true">
+            <span className="sparkle-item s1">✦</span>
+            <span className="sparkle-item s2">✧</span>
+          </div>
+        )}
+
         <div
           className={`crt-eyes eyes-${idleState} ${
             blinking ? "is-blinking" : ""
-          } ${poked ? "eyes-poked is-poked" : ""}`}
+          } ${reaction ? `eyes-${reaction} is-poked` : ""} ${
+            isDancing ? "eyes-dance" : ""
+          }`}
           style={{
-            transform: `translate(${gaze.eyeX}px, ${gaze.eyeY}px)${
-              idleState === "curious" && gaze.eyeX === 0 && gaze.eyeY === 0
+            transform: `translate(${autoLookX}px, ${autoLookY}px)${
+              (idleState === "hum" || idleState === "wink") &&
+              autoLookX === 0 &&
+              autoLookY === 0
                 ? " rotate(-3deg)"
                 : ""
             }`,
@@ -1613,7 +1811,10 @@ function RobotCRTUnit({
                 transform: `translate(${gaze.pupilX}px, ${gaze.pupilY}px)`,
               }}
               aria-hidden="true"
-            />
+            >
+              <span className="pupil-glint" />
+              <span className="pupil-glint-sm" />
+            </span>
           </div>
           <div className="crt-eye right-eye">
             <span
@@ -1622,20 +1823,25 @@ function RobotCRTUnit({
                 transform: `translate(${gaze.pupilX}px, ${gaze.pupilY}px)`,
               }}
               aria-hidden="true"
-            />
+            >
+              <span className="pupil-glint" />
+              <span className="pupil-glint-sm" />
+            </span>
           </div>
         </div>
 
         <div
           className={`crt-cheeks ${
-            idleState === "yawn" || idleState === "curious" || poked
+            idleState === "yawn" ||
+            idleState === "hum" ||
+            idleState === "wink" ||
+            Boolean(reaction) ||
+            isDancing
               ? "is-visible"
               : ""
           }`}
           style={{
-            transform: `translate(${Math.round(gaze.eyeX * 4.5) / 10}px, ${
-              Math.round(gaze.eyeY * 4.5) / 10
-            }px)`,
+            transform: `translate(${eyeShiftX}px, ${eyeShiftY}px)`,
           }}
           aria-hidden="true"
         >
@@ -1647,9 +1853,7 @@ function RobotCRTUnit({
           <div
             className="crt-mouth is-speaking"
             style={{
-              transform: `translate(${Math.round(gaze.eyeX * 4.5) / 10}px, ${
-                Math.round(gaze.eyeY * 4.5) / 10
-              }px)`,
+              transform: `translate(${eyeShiftX}px, ${eyeShiftY}px)`,
             }}
             aria-hidden="true"
           >
@@ -1659,13 +1863,34 @@ function RobotCRTUnit({
             <span />
             <span />
           </div>
+        ) : reaction === "snack" ? (
+          <div
+            className="crt-mouth-munch"
+            style={{
+              transform: `translate(${eyeShiftX}px, ${eyeShiftY}px)`,
+            }}
+            aria-hidden="true"
+          />
+        ) : reaction === "dizzy" ? (
+          <div className="crt-mouth-dizzy" aria-hidden="true" />
+        ) : reaction === "headpat" ||
+          reaction === "tickle" ||
+          reaction === "poke" ||
+          isDancing ? (
+          <div
+            className="crt-mouth-happy"
+            style={{
+              transform: `translate(${eyeShiftX}px, ${eyeShiftY}px)`,
+            }}
+            aria-hidden="true"
+          >
+            <span className="mouth-tongue" />
+          </div>
         ) : idleState === "yawn" ? (
           <div
             className="crt-mouth-yawn"
             style={{
-              transform: `translate(${Math.round(gaze.eyeX * 4.5) / 10}px, ${
-                Math.round(gaze.eyeY * 4.5) / 10
-              }px)`,
+              transform: `translate(${eyeShiftX}px, ${eyeShiftY}px)`,
             }}
             aria-hidden="true"
           />
@@ -1673,19 +1898,65 @@ function RobotCRTUnit({
           <div className="crt-mouth-sleep" aria-hidden="true" />
         ) : (
           <div
-            className={`crt-mouth-smile ${poked ? "is-happy" : ""}`}
+            className="crt-mouth-cat"
             style={{
-              transform: `translate(${Math.round(gaze.eyeX * 4.5) / 10}px, ${
-                Math.round(gaze.eyeY * 4.5) / 10
-              }px)`,
+              transform: `translate(${eyeShiftX}px, ${eyeShiftY}px)`,
             }}
             aria-hidden="true"
-          />
+          >
+            <span className="cat-lip left-lip" />
+            <span className="cat-lip right-lip" />
+          </div>
         )}
 
-        <span className="crt-click-hint" aria-hidden="true">
-          SENTUH LAYAR // TAP
-        </span>
+        {/* Cute Robot Paws on Bottom Visor Edge */}
+        <div className="robot-paws" aria-hidden="true">
+          <span className="robot-paw left-paw" />
+          {reaction === "snack" && (
+            <span className="robot-snack-item">⚡</span>
+          )}
+          <span className="robot-paw right-paw" />
+        </div>
+      </div>
+
+      {/* Interactive Mini Action Buttons */}
+      <div
+        className="robot-action-dock"
+        role="group"
+        aria-label="Interaksi cepat dengan REYA"
+      >
+        <button
+          type="button"
+          className={`robot-mini-btn ${reaction === "headpat" ? "active" : ""}`}
+          onClick={() => triggerReaction("headpat", 2800)}
+          title="Elus kepala REYA"
+        >
+          ♥ Elus
+        </button>
+        <button
+          type="button"
+          className={`robot-mini-btn ${reaction === "tickle" ? "active" : ""}`}
+          onClick={() => triggerReaction("tickle", 2600)}
+          title="Kilik perut REYA"
+        >
+          ★ Kilik
+        </button>
+        <button
+          type="button"
+          className={`robot-mini-btn ${reaction === "snack" ? "active" : ""}`}
+          onClick={() => triggerReaction("snack", 2800)}
+          title="Beri baterai cemilan energi"
+        >
+          ⚡ Cas
+        </button>
+        <button
+          type="button"
+          className={`robot-mini-btn ${reaction === "dance" ? "active" : ""}`}
+          onClick={() => triggerReaction("dance", 3400)}
+          title="Ajak REYA joget"
+        >
+          ♫ Joget
+        </button>
       </div>
 
       <div
@@ -1693,7 +1964,7 @@ function RobotCRTUnit({
           thinking ? "thinking" : ""
         } ${idleState === "sleep" ? "sleeping" : ""} ${
           idleState === "yawn" ? "yawning" : ""
-        } ${poked ? "poked" : ""}`}
+        } ${reaction ? "poked" : ""}`}
       >
         {statusLabel}
       </div>
@@ -2018,20 +2289,58 @@ export default function Home() {
     setLastActivity(Date.now());
   }, []);
 
-  const handleRobotPoke = useCallback(() => {
-    recordActivity();
-    const audio = ensureMusicAudio();
-    if (audio) {
+  const handleRobotPoke = useCallback(
+    (kind: RobotInteractionType = "poke") => {
+      recordActivity();
+      const audio = ensureMusicAudio();
+      if (!audio) return;
       try {
-        playGlockenspiel(audio.context, audio.master, 783.99, 0, 0.7);
-        window.setTimeout(() => {
-          playGlockenspiel(audio.context, audio.master, 1046.5, 0, 0.75);
-        }, 90);
+        if (kind === "headpat") {
+          playGlockenspiel(audio.context, audio.master, 659.25, -0.15, 0.65);
+          window.setTimeout(() => {
+            playGlockenspiel(audio.context, audio.master, 880.0, 0.15, 0.72);
+          }, 110);
+          window.setTimeout(() => {
+            playGlockenspiel(audio.context, audio.master, 1046.5, 0, 0.78);
+          }, 220);
+        } else if (kind === "tickle") {
+          [783.99, 987.77, 1174.66, 1318.51].forEach((freq, idx) => {
+            window.setTimeout(() => {
+              playGlockenspiel(audio.context, audio.master, freq, 0, 0.7);
+            }, idx * 75);
+          });
+        } else if (kind === "dizzy") {
+          [987.77, 880.0, 783.99, 659.25].forEach((freq, idx) => {
+            window.setTimeout(() => {
+              playGlockenspiel(audio.context, audio.master, freq, 0, 0.68);
+            }, idx * 95);
+          });
+        } else if (kind === "snack") {
+          [523.25, 659.25, 783.99, 1046.5].forEach((freq, idx) => {
+            window.setTimeout(() => {
+              playGlockenspiel(audio.context, audio.master, freq, 0, 0.75);
+            }, idx * 85);
+          });
+        } else if (kind === "dance") {
+          [523.25, 659.25, 783.99, 659.25, 880.0, 1046.5].forEach(
+            (freq, idx) => {
+              window.setTimeout(() => {
+                playGlockenspiel(audio.context, audio.master, freq, 0, 0.74);
+              }, idx * 115);
+            },
+          );
+        } else {
+          playGlockenspiel(audio.context, audio.master, 783.99, 0, 0.7);
+          window.setTimeout(() => {
+            playGlockenspiel(audio.context, audio.master, 1046.5, 0, 0.75);
+          }, 90);
+        }
       } catch {
         // Audio error
       }
-    }
-  }, [ensureMusicAudio, recordActivity]);
+    },
+    [ensureMusicAudio, recordActivity],
+  );
 
   const stopSong = useCallback(() => {
     songTimersRef.current.forEach((t) => window.clearTimeout(t));
@@ -3766,12 +4075,13 @@ export default function Home() {
             <span className="module-id">GEMINI-ARGON READY</span>
           </div>
 
-          <div className="robot-deck" onMouseMove={recordActivity}>
+          <div className="robot-deck">
             <RobotCRTUnit
               speaking={speaking}
               listening={listening}
               thinking={thinking}
               mood={mood}
+              musicActive={musicPlaying || playingSong || playingMelody}
               lastActivity={lastActivity}
               onPoke={handleRobotPoke}
             />
