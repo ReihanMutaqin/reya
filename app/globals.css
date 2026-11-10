@@ -310,6 +310,20 @@ button {
   justify-content: space-between;
   min-height: 215px;
   position: relative;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
+}
+
+.crt-housing.is-breathing {
+  animation: crtHousingBreathe 4s ease-in-out infinite alternate;
+}
+
+.crt-housing.is-sleeping {
+  box-shadow: 0 0 20px rgba(155, 163, 255, 0.22);
+}
+
+@keyframes crtHousingBreathe {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-3px); }
 }
 
 .crt-screen {
@@ -323,8 +337,16 @@ button {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: 18px 12px;
+  gap: 14px;
+  padding: 18px 12px 14px;
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.crt-screen:hover {
+  border-color: rgba(232, 244, 122, 0.4);
 }
 
 .mood-1 .crt-screen {
@@ -335,28 +357,145 @@ button {
   background: #1A282E;
 }
 
+.crt-thought-bubble {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(14, 20, 16, 0.92);
+  border: 1px solid var(--crt-secondary);
+  color: var(--crt-secondary);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: bubblePop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 6;
+}
+
+.crt-thought-bubble.is-sleep {
+  border-color: #9BA3FF;
+  color: #D2B3FF;
+}
+
+.crt-thought-bubble.is-yawn {
+  border-color: #E8F47A;
+  color: #E8F47A;
+}
+
+.crt-thought-bubble.is-poked {
+  border-color: #FF8BA7;
+  color: #FF8BA7;
+}
+
+@keyframes bubblePop {
+  0% { opacity: 0; transform: translateX(-50%) scale(0.85); }
+  100% { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+.crt-zzz-box {
+  position: absolute;
+  right: 16px;
+  top: 14px;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.zzz-item {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  color: #9BA3FF;
+  text-shadow: 0 0 8px rgba(155, 163, 255, 0.9);
+  animation: floatZzzAnim 2.6s ease-out infinite;
+}
+
+.zzz-item.z1 { font-size: 10px; right: 12px; animation-delay: 0s; }
+.zzz-item.z2 { font-size: 14px; right: 2px; animation-delay: 0.85s; }
+.zzz-item.z3 { font-size: 20px; right: -8px; animation-delay: 1.7s; }
+
+@keyframes floatZzzAnim {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
+  25% { opacity: 1; }
+  75% { opacity: 0.8; }
+  100% { opacity: 0; transform: translate(14px, -34px) scale(1.25); }
+}
+
+.crt-notes-box {
+  position: absolute;
+  left: 16px;
+  top: 18px;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.note-item {
+  position: absolute;
+  font-size: 15px;
+  color: var(--crt-primary);
+  text-shadow: 0 0 10px rgba(232, 244, 122, 0.9);
+  animation: floatNoteAnim 2.3s ease-out infinite;
+}
+
+.note-item.n1 { left: 0; animation-delay: 0s; }
+.note-item.n2 { left: 14px; animation-delay: 1.15s; }
+
+@keyframes floatNoteAnim {
+  0% { opacity: 0; transform: translate(0, 0) rotate(-15deg) scale(0.6); }
+  40% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-10px, -30px) rotate(15deg) scale(1.2); }
+}
+
 .crt-eyes {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 34px;
+  transition: transform 0.25s ease;
+  z-index: 2;
+}
+
+.crt-eyes.is-blinking .crt-eye {
+  transform: scaleY(0.08) !important;
+}
+
+.crt-eyes.eyes-curious {
+  transform: rotate(-3deg);
+}
+
+.crt-eyes.is-poked {
+  animation: eyePokeWiggle 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes eyePokeWiggle {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.18) rotate(4deg); }
+  70% { transform: scale(1.08) rotate(-3deg); }
+  100% { transform: scale(1) rotate(0deg); }
 }
 
 .crt-eye {
   width: 28px;
   height: 34px;
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--crt-primary);
   position: relative;
-  transition: transform 0.2s ease, background-color 0.2s ease;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 0 12px rgba(232, 244, 122, 0.35);
 }
 
 .mood-1 .crt-eye {
   background: var(--crt-bass);
+  box-shadow: 0 0 12px rgba(210, 179, 255, 0.35);
 }
 
 .mood-2 .crt-eye {
   background: var(--crt-secondary);
+  box-shadow: 0 0 12px rgba(104, 232, 165, 0.35);
 }
 
 .crt-eye::after {
@@ -364,22 +503,141 @@ button {
   position: absolute;
   top: 5px;
   left: 5px;
-  width: 8px;
-  height: 10px;
-  border-radius: 2px;
+  width: 9px;
+  height: 11px;
+  border-radius: 3px;
   background: #161A18;
+  transition: all 0.2s ease;
+}
+
+/* Sleep Eyes (- -) */
+.eyes-sleep .crt-eye {
+  height: 6px !important;
+  width: 30px;
+  border-radius: 3px;
+  background: #9BA3FF !important;
+  box-shadow: 0 0 12px rgba(155, 163, 255, 0.7);
+}
+
+.eyes-sleep .crt-eye::after {
+  display: none;
+}
+
+/* Yawning Eyes (> <) */
+.eyes-yawn .crt-eye {
+  height: 15px;
+  width: 28px;
+  border-radius: 8px 8px 3px 3px;
+  background: #E8F47A;
+  transform: scale(0.94);
+}
+
+.eyes-yawn .crt-eye::after {
+  top: 3px;
+  left: 5px;
+  width: 6px;
+  height: 6px;
+}
+
+/* Curious / Smiling Eyes (^ ^) */
+.eyes-curious .crt-eye {
+  border-radius: 14px 14px 4px 4px;
+  height: 30px;
+}
+
+/* Surprised / Poked Eyes (O O) */
+.eyes-poked .crt-eye {
+  width: 32px;
+  height: 38px;
+  border-radius: 50%;
+  background: #FFFFFF !important;
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.9);
+}
+
+.eyes-poked .crt-eye::after {
+  top: 10px;
+  left: 10px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
 }
 
 .is-thinking .crt-eye {
   height: 14px;
 }
 
+/* Cute Blushing Cheeks */
+.crt-cheeks {
+  display: flex;
+  justify-content: space-between;
+  width: 112px;
+  margin-top: -6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  z-index: 2;
+}
+
+.crt-cheeks.is-visible {
+  opacity: 0.9;
+}
+
+.crt-cheeks .cheek {
+  width: 12px;
+  height: 6px;
+  border-radius: 50%;
+  background: #FF8BA7;
+  box-shadow: 0 0 8px #FF8BA7;
+}
+
+/* Mouth Variants */
 .crt-mouth {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
   height: 24px;
+  z-index: 2;
+}
+
+.crt-mouth-smile {
+  width: 20px;
+  height: 9px;
+  border: 3px solid var(--crt-secondary);
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 2;
+}
+
+.crt-mouth-smile.is-happy {
+  width: 26px;
+  height: 13px;
+  border-color: var(--crt-primary);
+  border-width: 3.5px;
+}
+
+.crt-mouth-yawn {
+  width: 18px;
+  height: 20px;
+  border-radius: 50%;
+  background: #141A17;
+  border: 3px solid var(--crt-primary);
+  animation: yawnPulse 1.8s ease-in-out infinite alternate;
+  z-index: 2;
+}
+
+@keyframes yawnPulse {
+  0% { transform: scale(0.92) scaleY(0.95); }
+  100% { transform: scale(1.15) scaleY(1.35); }
+}
+
+.crt-mouth-sleep {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(155, 163, 255, 0.55);
+  z-index: 2;
 }
 
 .crt-mouth span {
@@ -407,6 +665,22 @@ button {
   animation-delay: 0.24s;
 }
 
+.crt-click-hint {
+  position: absolute;
+  bottom: 4px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.04em;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.crt-screen:hover .crt-click-hint {
+  opacity: 0.85;
+}
+
 .crt-state-bar {
   margin-top: 10px;
   width: 100%;
@@ -419,6 +693,22 @@ button {
   background: #262E2A;
   color: var(--crt-primary);
   letter-spacing: 0.05em;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+.crt-state-bar.sleeping {
+  background: #1E2235;
+  color: #D2B3FF;
+}
+
+.crt-state-bar.yawning {
+  background: #3B331A;
+  color: #E8F47A;
+}
+
+.crt-state-bar.poked {
+  background: #4A1E2E;
+  color: #FF8BA7;
 }
 
 .crt-state-bar.listening {

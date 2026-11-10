@@ -1186,41 +1186,184 @@ function RobotCRTUnit({
   listening,
   thinking,
   mood,
+  lastActivity = 0,
+  onPoke,
 }: {
   speaking: boolean;
   listening: boolean;
   thinking: boolean;
   mood: number;
+  lastActivity?: number;
+  onPoke?: () => void;
 }) {
-  const statusLabel = listening
-    ? "REC // MENDENGARKAN"
-    : thinking
-      ? "PROC // GEMINI FLASH"
-      : speaking
-        ? "OUT // VOICEBOX AUDIO"
-        : "STBY // REYA SIAP";
+  const [idleSeconds, setIdleSeconds] = useState(0);
+  const [blinking, setBlinking] = useState(false);
+  const [poked, setPoked] = useState(false);
+  const lastActiveRef = useRef(lastActivity);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (speaking || listening || thinking) {
+        setIdleSeconds(0);
+      } else {
+        setIdleSeconds((prev) => {
+          if (lastActiveRef.current !== lastActivity) {
+            lastActiveRef.current = lastActivity;
+            return 0;
+          }
+          return prev + 1;
+        });
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [speaking, listening, thinking, lastActivity]);
+
+  useEffect(() => {
+    const blinkInterval = setInterval(() => {
+      setBlinking(true);
+      window.setTimeout(() => setBlinking(false), 160);
+    }, 3600);
+    return () => clearInterval(blinkInterval);
+  }, []);
+
+  const handleScreenClick = () => {
+    setPoked(true);
+    setIdleSeconds(0);
+    onPoke?.();
+    window.setTimeout(() => setPoked(false), 2400);
+  };
+
+  let idleState: "active" | "curious" | "yawn" | "sleep" = "active";
+  if (poked) {
+    idleState = "active";
+  } else if (speaking || listening || thinking) {
+    idleState = "active";
+  } else if (idleSeconds >= 28) {
+    idleState = "sleep";
+  } else if (idleSeconds >= 14) {
+    idleState = "yawn";
+  } else if (idleSeconds >= 7) {
+    idleState = "curious";
+  }
+
+  let statusLabel = "STBY // REYA SIAP";
+  let thoughtBubble = "";
+
+  if (listening) {
+    statusLabel = "REC // MENDENGARKAN";
+    thoughtBubble = "Aku dengar...";
+  } else if (thinking) {
+    statusLabel = "PROC // GEMINI FLASH";
+    thoughtBubble = "Sedang berpikir...";
+  } else if (speaking) {
+    statusLabel = "OUT // SUARA CERIA";
+    thoughtBubble = "Ngobrol bareng ♪";
+  } else if (poked) {
+    statusLabel = "HALO! // SENANG DISENTUH!";
+    thoughtBubble = "Ehh, halo! (*^^*)";
+  } else if (idleState === "sleep") {
+    statusLabel = "ZZZ // TIDUR NYENYAK...";
+    thoughtBubble = "Zzz... hoamzz...";
+  } else if (idleState === "yawn") {
+    statusLabel = "HOAMZZZ // NGANTUK DIKIT~";
+    thoughtBubble = "Hoaaamzzz... (*~*)";
+  } else if (idleState === "curious") {
+    statusLabel = "IDLE // BERSENANDUNG ♪";
+    thoughtBubble = "Lagi mikir melodi ♪";
+  }
 
   return (
     <div
-      className={`crt-housing mood-${mood} ${speaking ? "is-speaking" : ""} ${thinking ? "is-thinking" : ""
-        }`}
+      className={`crt-housing mood-${mood} ${speaking ? "is-speaking" : ""} ${
+        thinking ? "is-thinking" : ""
+      } ${idleState === "sleep" ? "is-sleeping" : "is-breathing"}`}
     >
-      <div className="crt-screen">
-        <div className="crt-eyes">
-          <div className="crt-eye" />
-          <div className="crt-eye" />
-        </div>
-        <div className="crt-mouth" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
-      </div>
       <div
-        className={`crt-state-bar ${listening ? "listening" : ""} ${thinking ? "thinking" : ""
+        className="crt-screen"
+        onClick={handleScreenClick}
+        title="Klik layar CRT untuk menyapa atau membangunkan REYA!"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") handleScreenClick();
+        }}
+      >
+        {thoughtBubble && (
+          <div
+            className={`crt-thought-bubble is-${idleState} ${
+              poked ? "is-poked" : ""
+            }`}
+          >
+            <span>{thoughtBubble}</span>
+          </div>
+        )}
+
+        {idleState === "sleep" && (
+          <div className="crt-zzz-box" aria-hidden="true">
+            <span className="zzz-item z1">z</span>
+            <span className="zzz-item z2">Z</span>
+            <span className="zzz-item z3">Z</span>
+          </div>
+        )}
+
+        {idleState === "curious" && (
+          <div className="crt-notes-box" aria-hidden="true">
+            <span className="note-item n1">♪</span>
+            <span className="note-item n2">♫</span>
+          </div>
+        )}
+
+        <div
+          className={`crt-eyes eyes-${idleState} ${
+            blinking ? "is-blinking" : ""
+          } ${poked ? "eyes-poked is-poked" : ""}`}
+        >
+          <div className="crt-eye left-eye" />
+          <div className="crt-eye right-eye" />
+        </div>
+
+        <div
+          className={`crt-cheeks ${
+            idleState === "yawn" || idleState === "curious" || poked
+              ? "is-visible"
+              : ""
           }`}
+          aria-hidden="true"
+        >
+          <span className="cheek" />
+          <span className="cheek" />
+        </div>
+
+        {speaking ? (
+          <div className="crt-mouth is-speaking" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
+        ) : idleState === "yawn" ? (
+          <div className="crt-mouth-yawn" aria-hidden="true" />
+        ) : idleState === "sleep" ? (
+          <div className="crt-mouth-sleep" aria-hidden="true" />
+        ) : (
+          <div
+            className={`crt-mouth-smile ${poked ? "is-happy" : ""}`}
+            aria-hidden="true"
+          />
+        )}
+
+        <span className="crt-click-hint" aria-hidden="true">
+          SENTUH LAYAR // TAP
+        </span>
+      </div>
+
+      <div
+        className={`crt-state-bar ${listening ? "listening" : ""} ${
+          thinking ? "thinking" : ""
+        } ${idleState === "sleep" ? "sleeping" : ""} ${
+          idleState === "yawn" ? "yawning" : ""
+        } ${poked ? "poked" : ""}`}
       >
         {statusLabel}
       </div>
@@ -1488,6 +1631,26 @@ export default function Home() {
     return { context, master };
   }, []);
 
+  const [lastActivity, setLastActivity] = useState(() => Date.now());
+  const recordActivity = useCallback(() => {
+    setLastActivity(Date.now());
+  }, []);
+
+  const handleRobotPoke = useCallback(() => {
+    recordActivity();
+    const audio = ensureMusicAudio();
+    if (audio) {
+      try {
+        playGlockenspiel(audio.context, audio.master, 783.99, 0, 0.7);
+        window.setTimeout(() => {
+          playGlockenspiel(audio.context, audio.master, 1046.5, 0, 0.75);
+        }, 90);
+      } catch {
+        // Audio error
+      }
+    }
+  }, [ensureMusicAudio, recordActivity]);
+
   const stopMusic = useCallback(() => {
     if (noteReleaseTimerRef.current)
       window.clearTimeout(noteReleaseTimerRef.current);
@@ -1539,6 +1702,7 @@ export default function Home() {
 
   const playScaleNote = useCallback(
     (note: ScaleNote, pan = 0) => {
+      recordActivity();
       const audio = ensureMusicAudio();
       if (!audio) return;
       if (!musicPlayingRef.current) {
@@ -1568,7 +1732,7 @@ export default function Home() {
         setActiveScaleNoteId((prev) => (prev === note.id ? null : prev));
       }, 550);
     },
-    [ensureMusicAudio],
+    [ensureMusicAudio, recordActivity],
   );
 
   const playExampleMelody = useCallback(() => {
@@ -1635,6 +1799,7 @@ export default function Home() {
 
   const triggerMatrixCoordinate = useCallback(
     (normX: number, normY: number) => {
+      recordActivity();
       const audio = ensureMusicAudio();
       if (!audio) return;
       if (!musicPlayingRef.current) {
@@ -1696,12 +1861,13 @@ export default function Home() {
         `Nada aktif: ${label ?? note.name} (${Math.round(note.freq)} Hz · Filter ${cutoffHz} Hz)`,
       );
     },
-    [ensureMusicAudio],
+    [ensureMusicAudio, recordActivity],
   );
 
   const handleHandMusic = useCallback(
     (hands: HandInfo[], now: number) => {
       if (!musicPlayingRef.current) return;
+      if (hands.length > 0) recordActivity();
       const audio = ensureMusicAudio();
       if (!audio) return;
 
@@ -1842,7 +2008,7 @@ export default function Home() {
 
       setHandPositions(newPositions);
     },
-    [ensureMusicAudio],
+    [ensureMusicAudio, recordActivity],
   );
 
   const runGestureAction = useCallback(
@@ -2277,6 +2443,7 @@ export default function Home() {
       const userMessage: Message = { role: "user", content: text };
       const nextMessages = [...messages, userMessage];
       setMessages(nextMessages);
+      recordActivity();
       setInput("");
       setThinking(true);
       let answer = "";
@@ -2301,92 +2468,103 @@ export default function Home() {
           .trim();
 
       const historyText = nextMessages
-        .slice(-8)
+        .slice(-6)
         .map(
           (m) => `${m.role === "assistant" ? "REYA" : "Pengguna"}: ${m.content}`,
         )
         .join("\n");
       const fullPrompt = `${systemPrompt}\n\nPercakapan:\n${historyText}\nREYA:`;
 
-      // 1. Direct Argon Gemini API call (gemini-flash-latest with X-goog-api-key)
-      if (GEMINI_API_KEY) {
-        try {
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-goog-api-key": GEMINI_API_KEY,
-              },
-              body: JSON.stringify({
-                contents: [
-                  {
-                    parts: [
-                      {
-                        text: fullPrompt,
-                      },
-                    ],
+      // 1. Fast Server Route (/api/chat -> multi-model Gemini with 5s timeout)
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: nextMessages.slice(-6) }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (response.ok) {
+          const data = (await response.json()) as {
+            message?: string;
+            model?: string;
+          };
+          const candidate = cleanResponse(data.message ?? "");
+          if (candidate) {
+            answer = candidate;
+            if (data.model) setActiveBrainLabel(data.model);
+          }
+        }
+      } catch {
+        // Fall back to direct Argon API if server route is busy
+      }
+
+      // 2. Direct Argon Gemini API call (gemini-3-flash-preview or gemini-flash-latest)
+      if (!answer && GEMINI_API_KEY) {
+        for (const modelCandidate of [
+          "gemini-3-flash-preview",
+          GEMINI_MODEL,
+          "gemini-flash-latest",
+        ]) {
+          try {
+            const response = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${modelCandidate}:generateContent`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-goog-api-key": GEMINI_API_KEY,
+                },
+                body: JSON.stringify({
+                  contents: [
+                    {
+                      parts: [
+                        {
+                          text: fullPrompt,
+                        },
+                      ],
+                    },
+                  ],
+                  generationConfig: {
+                    maxOutputTokens: 300,
+                    temperature: 0.7,
+                    topP: 0.9,
+                    thinkingConfig: { thinkingBudget: 0 },
                   },
-                ],
-              }),
-              signal: AbortSignal.timeout(12000),
-            },
-          );
-          if (response.ok) {
-            const data = (await response.json()) as {
-              candidates?: Array<{
-                content?: { parts?: Array<{ text?: string }> };
-              }>;
-            };
-            const candidate = cleanResponse(
-              data.candidates?.[0]?.content?.parts
-                ?.map((p) => p.text ?? "")
-                .join("") ?? "",
+                }),
+                signal: AbortSignal.timeout(3500),
+              },
             );
-            if (candidate) {
-              answer = candidate;
-              setActiveBrainLabel(GEMINI_MODEL);
+            if (response.ok) {
+              const data = (await response.json()) as {
+                candidates?: Array<{
+                  content?: { parts?: Array<{ text?: string }> };
+                }>;
+              };
+              const candidate = cleanResponse(
+                data.candidates?.[0]?.content?.parts
+                  ?.map((p) => p.text ?? "")
+                  .join("") ?? "",
+              );
+              if (candidate) {
+                answer = candidate;
+                setActiveBrainLabel(modelCandidate);
+                break;
+              }
             }
+          } catch {
+            continue;
           }
-        } catch {
-          // Try server route next
         }
       }
 
-      // 2. Next.js Server Route (/api/chat -> Argon Gemini)
-      if (!answer) {
-        try {
-          const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ messages: nextMessages.slice(-8) }),
-            signal: AbortSignal.timeout(14000),
-          });
-          if (response.ok) {
-            const data = (await response.json()) as {
-              message?: string;
-              model?: string;
-            };
-            const candidate = cleanResponse(data.message ?? "");
-            if (candidate) {
-              answer = candidate;
-              if (data.model) setActiveBrainLabel(data.model);
-            }
-          }
-        } catch {
-          // Try Local AI proxy next
-        }
-      }
-
-      // 3. Local Python AI Backend (/api/chat -> Argon Gemini)
+      // 3. Local Python AI Backend (/api/chat)
       if (!answer) {
         try {
           const response = await fetch(`${API_BASE}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ messages: nextMessages.slice(-10) }),
-            signal: AbortSignal.timeout(15000),
+            body: JSON.stringify({ messages: nextMessages.slice(-6) }),
+            signal: AbortSignal.timeout(4000),
           });
           if (response.ok) {
             const data = (await response.json()) as { message: string };
@@ -2397,6 +2575,7 @@ export default function Home() {
         }
       }
 
+      // 4. Instant local fallback
       if (!answer) {
         answer = fallbackAnswer(text);
       }
@@ -2406,7 +2585,7 @@ export default function Home() {
       setThinking(false);
       void speak(answer);
     },
-    [input, messages, speak, thinking],
+    [input, messages, recordActivity, speak, thinking],
   );
 
   const startBrowserRecognition = useCallback(() => {
@@ -3008,12 +3187,14 @@ export default function Home() {
             <span className="module-id">GEMINI-ARGON READY</span>
           </div>
 
-          <div className="robot-deck">
+          <div className="robot-deck" onMouseMove={recordActivity}>
             <RobotCRTUnit
               speaking={speaking}
               listening={listening}
               thinking={thinking}
               mood={mood}
+              lastActivity={lastActivity}
+              onPoke={handleRobotPoke}
             />
 
             <div className="robot-info-column">
@@ -3143,7 +3324,10 @@ export default function Home() {
               <input
                 className="composer-input"
                 value={input}
-                onChange={(event) => setInput(event.target.value)}
+                onChange={(event) => {
+                  setInput(event.target.value);
+                  recordActivity();
+                }}
                 placeholder={
                   listening
                     ? "Mendengarkan suaramu..."
