@@ -171,31 +171,57 @@ function parseNotesChart(chartText: string): {
   const resMatch = chartText.match(/Resolution\s*=\s*(\d+)/i);
   const resolution = resMatch ? Math.max(48, Number(resMatch[1])) : 192;
 
-  const bpmMatch = chartText.match(/\d+\s*=\s*B\s+(\d+)/);
-  const milliBpm = bpmMatch ? Number(bpmMatch[1]) : 120000;
-  const bpm = Math.max(60, Math.min(220, milliBpm / 1000));
-  const msPerTick = 60000 / (bpm * resolution);
+  // Build full SyncTrack tempo map for accurate timestamps across the entire song
+  const syncSection =
+    chartText.match(/\[SyncTrack\]\s*\{([\s\S]*?)\}/i)?.[1] ?? "";
+  const tempoEvents: Array<{ tick: number; bpm: number; timeMs: number }> = [];
+  const bpmRegex = /(\d+)\s*=\s*B\s+(\d+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = bpmRegex.exec(syncSection)) !== null) {
+    const tick = Number(match[1]);
+    const bpm = Math.max(40, Math.min(260, Number(match[2]) / 1000));
+    if (tempoEvents.length === 0) {
+      tempoEvents.push({ tick: 0, bpm, timeMs: 0 });
+    } else {
+      const prev = tempoEvents[tempoEvents.length - 1];
+      const deltaTicks = Math.max(0, tick - prev.tick);
+      const deltaMs = (deltaTicks * 60000) / (prev.bpm * resolution);
+      tempoEvents.push({ tick, bpm, timeMs: prev.timeMs + deltaMs });
+    }
+  }
+  if (tempoEvents.length === 0) {
+    tempoEvents.push({ tick: 0, bpm: 120, timeMs: 0 });
+  }
 
-  // 1. Parse Lyrics from [Events]
-  const rawLyrics: Array<{ tick: number; word: string }> = [];
+  const tickToMs = (tick: number): number => {
+    let ev = tempoEvents[0];
+    for (let i = 1; i < tempoEvents.length; i++) {
+      if (tempoEvents[i].tick <= tick) ev = tempoEvents[i];
+      else break;
+    }
+    const deltaTicks = Math.max(0, tick - ev.tick);
+    return Math.round(ev.timeMs + (deltaTicks * 60000) / (ev.bpm * resolution));
+  };
+
+  // 1. Parse ALL Lyrics from [Events] across the entire song
+  const rawLyrics: Array<{ tick: number; timeMs: number; word: string }> = [];
   const eventsSection = chartText.match(/\[Events\]\s*\{([\s\S]*?)\}/i)?.[1] ?? "";
   const lyricRegex = /(\d+)\s*=\s*E\s*"lyric\s+([^"]+)"/gi;
-  let match: RegExpExecArray | null;
   while ((match = lyricRegex.exec(eventsSection)) !== null) {
     const tick = Number(match[1]);
     const cleaned = cleanLyricSyllable(match[2]);
     if (cleaned && cleaned !== "+") {
-      rawLyrics.push({ tick, word: cleaned });
+      rawLyrics.push({ tick, timeMs: tickToMs(tick), word: cleaned });
     }
   }
 
   const lyrics: EnchorLyricLine[] = [];
   let currentWords: string[] = [];
-  let lineStartTick = 0;
+  let lineStartMs = 0;
 
   for (let i = 0; i < rawLyrics.length; i++) {
     const item = rawLyrics[i];
-    if (currentWords.length === 0) lineStartTick = item.tick;
+    if (currentWords.length === 0) lineStartMs = item.timeMs;
 
     const prev = currentWords[currentWords.length - 1];
     if (prev && prev.endsWith("-")) {
@@ -205,10 +231,10 @@ function parseNotesChart(chartText: string): {
       currentWords.push(item.word.replace(/-$/, "-"));
     }
 
-    const nextTick = rawLyrics[i + 1]?.tick ?? Infinity;
+    const nextMs = rawLyrics[i + 1]?.timeMs ?? Infinity;
     const isLineBreak =
-      currentWords.length >= 6 ||
-      (nextTick - item.tick) * msPerTick > 1800 ||
+      currentWords.length >= 7 ||
+      nextMs - item.timeMs > 1600 ||
       /[.!?]$/.test(item.word);
 
     if (isLineBreak) {
@@ -219,7 +245,7 @@ function parseNotesChart(chartText: string): {
         .trim();
       if (text) {
         lyrics.push({
-          timeMs: Math.round(lineStartTick * msPerTick),
+          timeMs: lineStartMs,
           text,
         });
       }
@@ -229,11 +255,11 @@ function parseNotesChart(chartText: string): {
   if (currentWords.length > 0) {
     const text = currentWords.join(" ").replace(/- /g, "").trim();
     if (text) {
-      lyrics.push({ timeMs: Math.round(lineStartTick * msPerTick), text });
+      lyrics.push({ timeMs: lineStartMs, text });
     }
   }
 
-  // 2. Parse Notes from the best available instrument track
+  // 2. Parse Notes from the best available instrument track across the full song
   const sectionOrder = [
     "ExpertSingle",
     "HardSingle",
@@ -262,32 +288,41 @@ function parseNotesChart(chartText: string): {
     7: { id: "fa", freq: 349.23 },
   };
 
-  const parsedTicks: Array<{ tick: number; fret: number; lenTicks: number }> = [];
+  const parsedTicks: Array<{
+    tick: number;
+    timeMs: number;
+    fret: number;
+    lenMs: number;
+  }> = [];
   const noteRegex = /(\d+)\s*=\s*N\s+([0-7])\s+(\d+)/g;
-  let lastTick = -9999;
+  let lastMs = -9999;
   while ((match = noteRegex.exec(noteBlock)) !== null) {
     const tick = Number(match[1]);
     const fret = Number(match[2]);
     const lenTicks = Number(match[3]);
-    // Avoid chord duplicates on the exact same tick or ultra-fast trills < 90ms
-    if ((tick - lastTick) * msPerTick < 110) continue;
-    lastTick = tick;
-    parsedTicks.push({ tick, fret, lenTicks });
-    if (parsedTicks.length >= 64) break;
+    const timeMs = tickToMs(tick);
+    if (timeMs - lastMs < 160) continue;
+    lastMs = timeMs;
+    const endMs = tickToMs(tick + lenTicks);
+    parsedTicks.push({
+      tick,
+      timeMs,
+      fret,
+      lenMs: Math.max(220, endMs - timeMs),
+    });
+    if (parsedTicks.length >= 600) break;
   }
 
   const notes: EnchorNoteItem[] = parsedTicks.map((item, idx) => {
     const next = parsedTicks[idx + 1];
-    const rawGapMs = next
-      ? Math.round((next.tick - item.tick) * msPerTick)
-      : 420;
-    const gap = Math.max(170, Math.min(680, rawGapMs));
-    const rawDurSec = Math.max(0.24, (item.lenTicks * msPerTick) / 1000);
+    const rawGapMs = next ? Math.round(next.timeMs - item.timeMs) : 420;
+    const gap = Math.max(170, Math.min(850, rawGapMs));
+    const rawDurSec = Math.max(0.24, item.lenMs / 1000);
     const dur = Math.round(Math.min(1.1, Math.max(0.28, rawDurSec)) * 100) / 100;
 
     // Pair with nearby lyric syllable if available
     const nearLyric = rawLyrics.find(
-      (l) => Math.abs(l.tick - item.tick) * msPerTick < 400,
+      (l) => Math.abs(l.timeMs - item.timeMs) < 420,
     );
     const mapped = fretToScale[item.fret] ?? fretToScale[0];
     return {
@@ -299,7 +334,7 @@ function parseNotesChart(chartText: string): {
     };
   });
 
-  return { lyrics: lyrics.slice(0, 24), notes };
+  return { lyrics, notes };
 }
 
 function readVarLen(buf: Buffer, offset: number): { value: number; next: number } {
@@ -481,10 +516,10 @@ function parseMidiVocalsAndNotes(mid: Buffer): {
     const deduped: typeof filtered = [];
     let lastTick = -9999;
     for (const n of filtered) {
-      if ((n.tick - lastTick) * msPerTick < 120) continue;
+      if ((n.tick - lastTick) * msPerTick < 150) continue;
       lastTick = n.tick;
       deduped.push(n);
-      if (deduped.length >= 64) break;
+      if (deduped.length >= 600) break;
     }
 
     for (let i = 0; i < deduped.length; i++) {
@@ -493,7 +528,7 @@ function parseMidiVocalsAndNotes(mid: Buffer): {
       const rawGap = next
         ? Math.round((next.tick - cur.tick) * msPerTick)
         : 420;
-      const gap = Math.max(180, Math.min(680, rawGap));
+      const gap = Math.max(180, Math.min(850, rawGap));
       const dur =
         Math.round(
           Math.min(1.1, Math.max(0.28, (cur.durTicks * msPerTick) / 1000)) * 100,
@@ -512,14 +547,14 @@ function parseMidiVocalsAndNotes(mid: Buffer): {
     }
   }
 
-  return { lyrics: lyrics.slice(0, 24), notes };
+  return { lyrics, notes };
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const action = searchParams.get("action") || "search";
 
-  // 1. Stream & Unmask Audio directly from Enchor SNG CDN
+  // 1. Stream & Unmask Full Audio directly from Enchor SNG CDN
   if (action === "audio") {
     const md5 = searchParams.get("md5") || "";
     const preferredFile = searchParams.get("file") || "";
@@ -543,8 +578,8 @@ export async function GET(request: Request) {
       return Response.json({ error: "No audio stream in SNG" }, { status: 404 });
     }
 
-    // Fetch up to 4.5MB of the audio stream (covers entire song or long preview)
-    const maxAudioBytes = Math.min(audioEntry.size, 4_500_000);
+    // Stream full song audio entry (up to 25MB) so songs never cut off early
+    const maxAudioBytes = Math.min(audioEntry.size, 25_000_000);
     const unmasked = await fetchUnmaskedSngEntry(
       md5,
       audioEntry,
@@ -564,12 +599,13 @@ export async function GET(request: Request) {
       headers: {
         "Content-Type": contentType,
         "Content-Length": String(unmasked.length),
+        "Accept-Ranges": "bytes",
         "Cache-Control": "public, max-age=3600",
       },
     });
   }
 
-  // 2. Search Enchor.us API + Global Track/Lyric Fallback & Extract Singing Melody + Synced Lyrics
+  // 2. Search Enchor.us API + Global Track/Lyric Fallback & Extract Full Singing Melody + Synced Lyrics
   const query = (searchParams.get("q") || "bohemian rhapsody").trim();
   const targetMd5 = searchParams.get("md5") || "";
 
@@ -710,7 +746,7 @@ export async function GET(request: Request) {
           album: String(tr.collectionName ?? ""),
           genre: String(tr.primaryGenreName ?? "Pop"),
           year: String(tr.releaseDate ?? "").slice(0, 4),
-          charter: "Enchor + Official Audio",
+          charter: "Enchor + Full Lyrics",
           md5: `itunes-${trackId}`,
           albumArtUrl: artUrl,
           songLengthMs: Number(tr.trackTimeMillis ?? 180000),
@@ -724,16 +760,20 @@ export async function GET(request: Request) {
       }
     }
 
-    // Sort by title/artist match relevance first, then lyrics/vocals availability
+    // Sort by title/artist match relevance first, preferring Enchor full-length SNG streams when matched
     const sorted = [...summaries].sort((a, b) => {
+      const scoreA = scoreMatch(query, a.name, a.artist);
+      const scoreB = scoreMatch(query, b.name, b.artist);
       const relA =
-        scoreMatch(query, a.name, a.artist) +
+        scoreA +
         (a.hasLyrics ? 12 : 0) +
-        (a.hasVocals ? 10 : 0);
+        (a.hasVocals ? 10 : 0) +
+        (a.source === "enchor" && scoreA > 0 ? 18 : 0);
       const relB =
-        scoreMatch(query, b.name, b.artist) +
+        scoreB +
         (b.hasLyrics ? 12 : 0) +
-        (b.hasVocals ? 10 : 0);
+        (b.hasVocals ? 10 : 0) +
+        (b.source === "enchor" && scoreB > 0 ? 18 : 0);
       return relB - relA;
     });
 
@@ -787,7 +827,7 @@ export async function GET(request: Request) {
             chosen.md5,
             chartEntry,
             sngIndex.xorMask,
-            300_000,
+            2_000_000,
           );
           if (buf) {
             const parsed = parseNotesChart(buf.toString("utf8"));
@@ -801,7 +841,7 @@ export async function GET(request: Request) {
             chosen.md5,
             midEntry,
             sngIndex.xorMask,
-            300_000,
+            2_000_000,
           );
           if (buf) {
             const parsed = parseMidiVocalsAndNotes(buf);
@@ -812,7 +852,7 @@ export async function GET(request: Request) {
       }
     }
 
-    // Enrich synced lyrics from LRCLIB matching both song title and artist
+    // Enrich full synced lyrics from LRCLIB matching both song title and artist
     if (lyrics.length === 0) {
       let lrcCandidates: Array<Record<string, unknown>> = [];
       try {
@@ -866,9 +906,11 @@ export async function GET(request: Request) {
 
         if (typeof bestLrc?.syncedLyrics === "string") {
           const parsedLrc = parseLrcToLines(bestLrc.syncedLyrics);
-          const firstMs = parsedLrc[0]?.timeMs ?? 0;
-          lyrics = parsedLrc.slice(0, 24).map((line) => ({
-            timeMs: Math.max(0, line.timeMs - firstMs),
+          // For Enchor SNG full audio, keep exact timestamps; for global preview tracks, start at first lyric line
+          const offsetMs =
+            chosen.source === "enchor" ? 0 : (parsedLrc[0]?.timeMs ?? 0);
+          lyrics = parsedLrc.map((line) => ({
+            timeMs: Math.max(0, line.timeMs - offsetMs),
             text: line.text,
           }));
         } else if (typeof bestLrc?.plainLyrics === "string") {
@@ -876,8 +918,7 @@ export async function GET(request: Request) {
             .split(/\r?\n/)
             .map((l) => l.trim())
             .filter(Boolean)
-            .slice(0, 18)
-            .map((text, idx) => ({ timeMs: idx * 2600, text }));
+            .map((text, idx) => ({ timeMs: idx * 3200, text }));
         }
       }
     }
@@ -901,7 +942,21 @@ export async function GET(request: Request) {
         .flatMap((l) => l.text.split(/\s+/))
         .filter(Boolean);
       const syllables = ["La~", "Na~", "Mi~", "Lu~", "La~", "Du~"];
-      notes = Array.from({ length: 32 }, (_, idx) => {
+
+      // Generate enough notes to span the entire song duration (e.g. 240..500 notes)
+      const lastLyricMs =
+        lyrics.length > 0 ? lyrics[lyrics.length - 1].timeMs + 6000 : 120_000;
+      const totalSongMs = Math.max(
+        lastLyricMs,
+        Math.min(chosen.songLengthMs || 180_000, 300_000),
+      );
+      const avgGapMs = 360;
+      const noteCount = Math.max(
+        180,
+        Math.min(600, Math.ceil(totalSongMs / avgGapMs)),
+      );
+
+      notes = Array.from({ length: noteCount }, (_, idx) => {
         const pick =
           fallbackFreqs[
             (idx + chosen.name.charCodeAt(idx % chosen.name.length)) %
@@ -911,8 +966,10 @@ export async function GET(request: Request) {
           id: pick.id,
           freq: pick.freq,
           dur: idx % 4 === 3 ? 0.52 : 0.34,
-          gap: idx % 4 === 3 ? 440 : 300,
-          lyric: lyricWords[idx] || syllables[idx % syllables.length],
+          gap: idx % 4 === 3 ? 440 : 320,
+          lyric:
+            lyricWords[idx % Math.max(1, lyricWords.length)] ||
+            syllables[idx % syllables.length],
         };
       });
     }

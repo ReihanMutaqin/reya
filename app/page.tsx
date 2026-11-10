@@ -2837,22 +2837,35 @@ export default function Home() {
               `${song.title}: "${item.lyric}" (${note.name} / ${Math.round(pitchFreq)} Hz)`,
             );
           }
-          if (index === song.notes.length - 1) {
-            const endTimer = window.setTimeout(() => {
-              if (!enchorAudioRef.current || enchorAudioRef.current.paused) {
-                setPlayingSong(false);
-                setSingingMode(false);
-                setSingingLyric("");
-                setActiveSong(null);
-                setActiveScaleNoteId(null);
-                setLastPlayedLabel(`Lagu ${song.title} selesai dinyanyikan`);
-              }
-            }, 1400);
-            songTimersRef.current.push(endTimer);
-          }
         }, item.delay);
         songTimersRef.current.push(timer);
       });
+
+      const lastNoteMs =
+        song.notes.length > 0
+          ? song.notes[song.notes.length - 1].delay + 1600
+          : 0;
+      const lastLyricMs =
+        options?.lyrics && options.lyrics.length > 0
+          ? options.lyrics[options.lyrics.length - 1].timeMs + 4200
+          : 0;
+      const totalSongDurationMs = Math.max(lastNoteMs, lastLyricMs, 4000);
+
+      const endTimer = window.setTimeout(() => {
+        if (enchorAudioRef.current) {
+          enchorAudioRef.current.loop = false;
+          enchorAudioRef.current.pause();
+          enchorAudioRef.current.currentTime = 0;
+        }
+        setEnchorAudioPlaying(false);
+        setPlayingSong(false);
+        setSingingMode(false);
+        setSingingLyric("");
+        setActiveSong(null);
+        setActiveScaleNoteId(null);
+        setLastPlayedLabel(`Lagu ${song.title} selesai dinyanyikan`);
+      }, totalSongDurationMs);
+      songTimersRef.current.push(endTimer);
     },
     [ensureMusicAudio, recordActivity, showToast],
   );
@@ -2942,6 +2955,7 @@ export default function Home() {
 
         const hasStream = Boolean(sel.audioUrl || sel.vocalAudioUrl);
         if (enchorAudioRef.current) {
+          enchorAudioRef.current.loop = false;
           enchorAudioRef.current.pause();
           enchorAudioRef.current.currentTime = 0;
           setEnchorAudioPlaying(false);
@@ -2952,13 +2966,18 @@ export default function Home() {
           if (!enchorAudioRef.current) {
             enchorAudioRef.current = new Audio();
           }
+          const isPreviewStream = sel.md5.startsWith("itunes-");
           enchorAudioRef.current.src = streamUrl;
           enchorAudioRef.current.volume = 0.9;
+          // Loop backing track seamlessly if it's a global preview stream while full lyrics continue
+          enchorAudioRef.current.loop = isPreviewStream;
           enchorAudioRef.current.onended = () => {
-            setEnchorAudioPlaying(false);
-            setPlayingSong(false);
-            setSingingMode(false);
-            setSingingLyric("");
+            if (!isPreviewStream) {
+              setEnchorAudioPlaying(false);
+              setPlayingSong(false);
+              setSingingMode(false);
+              setSingingLyric("");
+            }
           };
           void enchorAudioRef.current
             .play()
