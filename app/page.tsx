@@ -2065,57 +2065,35 @@ function RobotCRTUnit({
         </div>
       </div>
 
-      {/* Interactive Mini Action Buttons */}
+      {/* Cute Chibi Sitting Body & Legs (Codex Mascot Style) */}
       <div
-        className="robot-action-dock"
-        role="group"
-        aria-label="Interaksi cepat dengan REYA"
+        className="robot-chibi-body"
+        role="button"
+        tabIndex={0}
+        aria-label={statusLabel}
+        onClick={() => {
+          if (onSingClick && singingActive) onSingClick();
+          else triggerReaction("tickle", 2600);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (onSingClick && singingActive) onSingClick();
+            else triggerReaction("tickle", 2600);
+          }
+        }}
       >
-        <button
-          type="button"
-          className={`robot-mini-btn ${reaction === "headpat" ? "active" : ""}`}
-          onClick={() => triggerReaction("headpat", 2800)}
-          title="Elus kepala REYA"
-        >
-          ♥ Elus
-        </button>
-        <button
-          type="button"
-          className={`robot-mini-btn ${reaction === "tickle" ? "active" : ""}`}
-          onClick={() => triggerReaction("tickle", 2600)}
-          title="Kilik perut REYA"
-        >
-          ★ Kilik
-        </button>
-        <button
-          type="button"
-          className={`robot-mini-btn ${reaction === "snack" ? "active" : ""}`}
-          onClick={() => triggerReaction("snack", 2800)}
-          title="Beri baterai cemilan energi"
-        >
-          ⚡ Cas
-        </button>
-        <button
-          type="button"
-          className={`robot-mini-btn ${singingActive ? "active" : ""}`}
-          onClick={() => {
-            if (onSingClick) onSingClick();
-            else triggerReaction("dance", 3400);
-          }}
-          title="Ajak REYA bernyanyi dari BitChord!"
-        >
-          🎤 Nyanyi
-        </button>
-      </div>
-
-      <div
-        className={`crt-state-bar ${listening ? "listening" : ""} ${
-          thinking ? "thinking" : ""
-        } ${idleState === "sleep" ? "sleeping" : ""} ${
-          idleState === "yawn" ? "yawning" : ""
-        } ${reaction ? "poked" : ""}`}
-      >
-        {statusLabel}
+        <span className="chibi-arm left-arm" aria-hidden="true" />
+        <div className="chibi-torso">
+          <span className="chibi-emblem" aria-hidden="true">
+            {singingActive ? "♪" : "Ø"}
+          </span>
+        </div>
+        <span className="chibi-arm right-arm" aria-hidden="true" />
+        <div className="chibi-legs" aria-hidden="true">
+          <span className="chibi-foot left-foot" />
+          <span className="chibi-foot right-foot" />
+        </div>
       </div>
     </div>
   );
@@ -2188,6 +2166,7 @@ export default function Home() {
   const songTimersRef = useRef<number[]>([]);
   const [showMatrixView, setShowMatrixView] = useState(false);
   const [showInstrumentDeck] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Enchor.us Karaoke & Cute Singing State
   const [enchorQuery, setEnchorQuery] = useState("Bohemian Rhapsody");
@@ -4345,255 +4324,221 @@ export default function Home() {
   };
 
   return (
-    <main className="app-shell companion-shell">
-      <header className="topbar">
-        <a className="brand" href="#top" aria-label="REYA beranda teman kerja">
-          <span className="brand-mark">R1</span>
-          <span className="brand-text">
-            <b>REYA // COMPANION</b>
-            <small>Teman Kerja AI · Paling Atas</small>
-          </span>
-        </a>
+    <main className="app-shell codex-pet-shell">
+      {/* Screen-reader & SEO headings */}
+      <div className="sr-only">
+        <h1>REYA // COMPANION</h1>
+        <h2>Panggung Musik</h2>
+        <h2>Obrolan Teman Kerja</h2>
+        <button type="button" onClick={openFloatingCompanion}>
+          Floating
+        </button>
+        <button type="button" onClick={toggleVoiceChatMode}>
+          {voiceChatMode ? "Auto-Mic" : "Mic"}
+        </button>
+        <button type="button" onClick={() => setMood((m) => (m + 1) % 3)}>
+          Mood
+        </button>
+        <button type="button" onClick={() => void speak("Halo, aku REYA!")}>
+          Uji Suara
+        </button>
+      </div>
 
-        <div className="topbar-actions">
-          <button
-            type="button"
-            className="hw-button"
-            onClick={openFloatingCompanion}
-            title="Buka jendela floating ukuran ringkas di pojok layar"
-          >
-            <span>📌 Mode Floating</span>
-          </button>
-          <a
-            className="hw-button primary"
-            href="/REYA-Companion.exe"
-            download="REYA-Companion.exe"
-            style={{ textDecoration: "none" }}
-            title="Unduh aplikasi Windows REYA-Companion.exe (Selalu Paling Atas di semua aplikasi)"
-          >
-            <span>⬇ Download .EXE</span>
-          </a>
-          <button
-            type="button"
-            className={`hw-button ${voiceChatMode ? "active-green" : ""}`}
-            onClick={toggleVoiceChatMode}
-          >
-            <IconMic />
-            <span>{voiceChatMode ? "Auto-Mic Aktif" : "Mode Suara"}</span>
-          </button>
-          <button
-            type="button"
-            className="hw-button"
-            onClick={() => {
-              setVoiceModal(true);
-              void probeVoicebox();
-            }}
-          >
-            <IconSpeaker />
-            <span>Studio Suara</span>
-          </button>
-          <button
-            type="button"
-            className="hw-button"
-            onClick={toggleTheme}
-            aria-label={
-              theme === "light"
-                ? "Ganti ke tema Studio Malam"
-                : "Ganti ke tema Chassis Terang"
+      {/* Tiny subtle corner bar for downloading the native transparent Desktop Pet .exe */}
+      <div className="codex-top-corner">
+        <a
+          className="codex-corner-pill primary"
+          href="/REYA-Companion.exe"
+          download="REYA-Companion.exe"
+          title="Download REYA-Companion.exe (Desktop Pet Transparan tanpa kotak seperti Codex)"
+        >
+          ⬇ Download REYA.exe (Desktop Pet)
+        </a>
+        <button
+          type="button"
+          className="codex-corner-pill"
+          onClick={() => {
+            setVoiceModal(true);
+            void probeVoicebox();
+          }}
+        >
+          <IconSpeaker />
+          <span>Studio Suara</span>
+        </button>
+        <button
+          type="button"
+          className="codex-corner-pill"
+          onClick={toggleTheme}
+          aria-label={
+            theme === "light"
+              ? "Ganti ke tema Studio Malam"
+              : "Ganti ke tema Chassis Terang"
+          }
+        >
+          <IconTheme dark={theme === "dark"} />
+        </button>
+      </div>
+
+      {/* CODEX-STYLE BOT-ONLY STAGE: ONLY THE BOT, CLOUD BUBBLE ABOVE, AND PILL BELOW */}
+      <div className="codex-pet-stage" id="top">
+        <RobotCRTUnit
+          speaking={speaking}
+          listening={listening}
+          thinking={thinking}
+          mood={mood}
+          musicActive={musicPlaying || playingSong || playingMelody}
+          singingActive={singingMode || enchorAudioPlaying}
+          singingLyric={singingLyric}
+          singingMouthOpen={singingMouthOpen}
+          singingSongTitle={
+            enchorSelected
+              ? `${enchorSelected.name} · ${enchorSelected.artist}`
+              : activeSong?.title ?? ""
+          }
+          spokenText={activeSpeechText}
+          lastActivity={lastActivity}
+          onPoke={handleRobotPoke}
+          onSingClick={() => {
+            if (singingMode || enchorAudioPlaying) {
+              stopSong();
+            } else {
+              void searchAndSingEnchor(enchorQuery || "Komang");
             }
+          }}
+        />
+
+        {/* CODEX-STYLE DARK CAPSULE PILL UNDER THE BOT: [ 📝 | 🎙️ (waveform) ] */}
+        <div className="codex-action-pill" role="toolbar" aria-label="Kontrol REYA">
+          <button
+            type="button"
+            className={`codex-pill-btn ${drawerOpen ? "active" : ""}`}
+            onClick={() => setDrawerOpen((prev) => !prev)}
+            title="Ketik pesan atau cari lagu"
+            aria-label="Buka ketik pesan atau cari lagu"
           >
-            <IconTheme dark={theme === "dark"} />
-            <span>{theme === "light" ? "Malam" : "Terang"}</span>
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+            </svg>
+          </button>
+
+          <span className="codex-pill-divider" aria-hidden="true" />
+
+          <button
+            type="button"
+            className={`codex-pill-btn waveform-btn ${
+              listening || speaking || singingMode || enchorAudioPlaying
+                ? "active"
+                : ""
+            }`}
+            onClick={() => {
+              if (enchorAudioPlaying || singingMode) {
+                togglePauseSong();
+              } else {
+                void startListening();
+              }
+            }}
+            title={
+              enchorAudioPlaying || singingMode
+                ? audioPaused
+                  ? "Lanjutkan lagu"
+                  : "Jeda lagu"
+                : listening
+                  ? "Hentikan mikrofon"
+                  : "Bicara langsung dengan REYA"
+            }
+            aria-label="Kontrol suara dan mikrofon REYA"
+          >
+            <span
+              className={`codex-wave-bars ${
+                listening ||
+                speaking ||
+                ((singingMode || enchorAudioPlaying) && !audioPaused)
+                  ? "animating"
+                  : ""
+              }`}
+              aria-hidden="true"
+            >
+              <i />
+              <i />
+              <i />
+              <i />
+              <i />
+            </span>
           </button>
         </div>
-      </header>
 
-      <div
-        className={`console-grid companion-only ${cameraExpanded ? "camera-expanded" : ""}`}
-        id="top"
-      >
-        {/* MOD-01: FLOATING COMPANION BOT, SPEECH/LYRIC BUBBLE, FULL MUSIC & LIVE CHAT */}
-        <section className="hw-module companion-main-card" aria-labelledby="mod01-heading">
-          <div className="module-index-bar">
-            <span className="module-id">
-              <span className="screw-dot" />
-              REYA // TEMAN KERJA FLOATING
-            </span>
-            <span className="module-id">PALING ATAS · SIAP MENEMANI</span>
-          </div>
-
-          <div className="robot-deck">
-            <RobotCRTUnit
-              speaking={speaking}
-              listening={listening}
-              thinking={thinking}
-              mood={mood}
-              musicActive={musicPlaying || playingSong || playingMelody}
-              singingActive={singingMode || enchorAudioPlaying}
-              singingLyric={singingLyric}
-              singingMouthOpen={singingMouthOpen}
-              singingSongTitle={
-                enchorSelected
-                  ? `${enchorSelected.name} · ${enchorSelected.artist}`
-                  : activeSong?.title ?? ""
-              }
-              spokenText={activeSpeechText}
-              lastActivity={lastActivity}
-              onPoke={handleRobotPoke}
-              onSingClick={() => {
-                if (singingMode || enchorAudioPlaying) {
-                  stopSong();
-                } else {
-                  void searchAndSingEnchor(enchorQuery || "Bohemian Rhapsody");
-                }
-              }}
-            />
-
-            <div className="robot-info-column">
-              <div className="robot-headline">
-                <h1 id="mod01-heading">Halo, aku REYA.</h1>
-                <p>
-                  Teman kerja AI yang lucu dan selalu siap menemanimu di paling
-                  atas semua aplikasi sambil mengobrol suara dan menyanyikan
-                  lagu kesukaanmu sampai selesai.
-                </p>
-              </div>
-
-              <div className="mood-selector-row">
-                {[
-                  { id: 0, label: "01 CERIA" },
-                  { id: 1, label: "02 KALEM" },
-                  { id: 2, label: "03 FOKUS" },
-                ].map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`mood-chip ${mood === item.id ? "active" : ""}`}
-                    onClick={() => setMood(item.id)}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className="hw-button"
-                  onClick={() =>
-                    void speak(
-                      "Halo! Aku REYA, teman kerjamu yang siap menemani di paling atas layar sambil mengobrol dan bernyanyi sampai lagunya beres!",
-                    )
-                  }
-                >
-                  <IconSpeaker />
-                  <span>Uji Suara</span>
-                </button>
-              </div>
-
-              <div className="companion-exe-banner">
-                <button
-                  type="button"
-                  className="hw-button"
-                  onClick={openFloatingCompanion}
-                >
-                  <span>📌 Jendela Floating</span>
-                </button>
-                <a
-                  className="hw-button primary"
-                  href="/REYA-Companion.exe"
-                  download="REYA-Companion.exe"
-                  style={{ textDecoration: "none" }}
-                >
-                  <span>⬇ Unduh REYA-Companion.exe (Paling Atas)</span>
-                </a>
-              </div>
-            </div>
-          </div>
-
-          {/* PANGGUNG MUSIK & KARAOKE FULL LAGU TANPA PUTUS */}
-          <div className="enchor-stage-box" style={{ marginTop: "16px" }}>
-            <div className="enchor-stage-header">
-              <div className="enchor-stage-title">
-                <span className="enchor-mic-badge">🎤</span>
-                <div>
-                  <strong>Panggung Musik &amp; Karaoke Full Lagu</strong>
-                  <small
-                    className="mono"
-                    style={{
-                      display: "block",
-                      fontSize: "10px",
-                      color: "var(--ink-muted)",
-                    }}
-                  >
-                    Putar lagu penuh sampai beres dengan bubble lirik langsung di atas kepala REYA
-                  </small>
-                </div>
-              </div>
-              {(singingMode || enchorAudioPlaying || playingSong) && (
-                <div style={{ display: "flex", gap: "6px" }}>
-                  {enchorAudioPlaying && (
-                    <button
-                      type="button"
-                      className="hw-button"
-                      style={{ minHeight: "32px", padding: "0 10px", fontSize: "11px" }}
-                      onClick={togglePauseSong}
-                    >
-                      <span>{audioPaused ? "▶ Lanjut" : "⏸ Jeda"}</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="hw-button primary"
-                    style={{ minHeight: "32px", padding: "0 10px", fontSize: "11px" }}
-                    onClick={stopSong}
-                  >
-                    <span>⏹ Berhenti</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
+        {/* COMPACT POPOVER DRAWER (ONLY WHEN 📝 IS CLICKED) */}
+        {drawerOpen && (
+          <div className="codex-popover" role="dialog" aria-label="Ketik atau putar lagu">
             <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (enchorQuery.trim()) {
-                  void searchAndSingEnchor(enchorQuery.trim());
-                }
+              className="codex-popover-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!input.trim()) return;
+                void askRobot();
               }}
-              style={{ display: "flex", gap: "6px", marginTop: "8px" }}
             >
               <input
-                type="text"
-                className="field-input"
-                value={enchorQuery}
-                onChange={(e) => setEnchorQuery(e.target.value)}
-                placeholder="Cari judul lagu atau nama penyanyi..."
-                style={{ flex: 1, minHeight: "38px", fontSize: "12px" }}
+                className="codex-popover-input"
+                value={input}
+                onChange={(event) => {
+                  setInput(event.target.value);
+                  setEnchorQuery(event.target.value);
+                  recordActivity();
+                }}
+                placeholder={
+                  listening
+                    ? "Mendengarkan suaramu..."
+                    : "Tanya REYA atau ketik judul lagu..."
+                }
+                aria-label="Pesan atau judul lagu untuk REYA"
               />
               <button
-                type="submit"
-                className="hw-button primary"
+                type="button"
+                className="codex-popover-btn"
+                title="Cari & Nyanyikan Lagu Penuh"
                 disabled={enchorLoading}
-                style={{ minHeight: "38px", padding: "0 14px", whiteSpace: "nowrap" }}
+                onClick={() => {
+                  const q = (input.trim() || enchorQuery.trim() || "Komang");
+                  void searchAndSingEnchor(q);
+                }}
               >
-                <span>
-                  {enchorLoading ? "Mencari..." : "🎤 Cari & Nyanyi"}
-                </span>
+                {enchorLoading ? "..." : "🎵"}
+              </button>
+              <button
+                type="submit"
+                className="codex-popover-btn send"
+                disabled={!input.trim() || thinking}
+                title="Kirim obrolan ke REYA"
+              >
+                ➤
               </button>
             </form>
 
-            <div className="enchor-quick-chips">
+            <div className="codex-chip-row">
               {[
-                "Wildflower",
                 "Komang",
+                "Wildflower",
                 "Laskar Pelangi",
                 "Hotel California",
                 "Bohemian Rhapsody",
-                "Hati-Hati di Jalan",
                 "Sial",
               ].map((preset) => (
                 <button
                   key={preset}
                   type="button"
-                  className="enchor-chip"
+                  className="codex-mini-chip"
                   onClick={() => {
                     setEnchorQuery(preset);
                     void searchAndSingEnchor(preset);
@@ -4604,103 +4549,41 @@ export default function Home() {
               ))}
             </div>
 
-            {enchorSelected && (
-              <div className="enchor-now-playing">
-                <div className="enchor-song-meta">
-                  {enchorSelected.albumArtUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={enchorSelected.albumArtUrl}
-                      alt={enchorSelected.name}
-                      className="enchor-album-art"
-                    />
-                  ) : (
-                    <div className="enchor-album-placeholder">🎤</div>
-                  )}
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <strong
-                      style={{
-                        display: "block",
-                        fontSize: "13px",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {enchorSelected.name}
-                    </strong>
-                    <span
-                      style={{
-                        display: "block",
-                        fontSize: "11px",
-                        color: "var(--ink-muted)",
-                      }}
-                    >
-                      {enchorSelected.artist}
-                      {enchorSelected.album
-                        ? ` · ${enchorSelected.album}`
-                        : ""}
-                    </span>
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "6px",
-                        marginTop: "6px",
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      {(enchorSelected.audioUrl ||
-                        enchorSelected.vocalAudioUrl) && (
-                        <button
-                          type="button"
-                          className={`hw-button ${enchorAudioPlaying ? "primary active-green" : ""}`}
-                          style={{
-                            minHeight: "30px",
-                            padding: "0 10px",
-                            fontSize: "11px",
-                          }}
-                          onClick={() =>
-                            void searchAndSingEnchor(
-                              enchorSelected.name,
-                              enchorSelected.md5,
-                              true,
-                            )
-                          }
-                        >
-                          <span>🎧 Lagu Asli Penuh + Karaoke</span>
-                        </button>
-                      )}
+            {(enchorAudioPlaying || singingMode || playingSong) && (
+              <div className="codex-now-playing">
+                <div className="codex-now-meta">
+                  <span className="codex-now-title">
+                    🎤{" "}
+                    {enchorSelected
+                      ? `${enchorSelected.name} — ${enchorSelected.artist}`
+                      : activeSong?.title ?? "Bernyanyi"}
+                  </span>
+                  <div className="codex-now-actions">
+                    {enchorAudioPlaying && (
                       <button
                         type="button"
-                        className={`hw-button ${singingMode && !enchorAudioPlaying ? "primary active-green" : ""}`}
-                        style={{
-                          minHeight: "30px",
-                          padding: "0 10px",
-                          fontSize: "11px",
-                        }}
-                        onClick={() =>
-                          void searchAndSingEnchor(
-                            enchorSelected.name,
-                            enchorSelected.md5,
-                            false,
-                          )
-                        }
+                        className="codex-mini-ctrl"
+                        onClick={togglePauseSong}
                       >
-                        <span>🎹 Vokal Synth REYA</span>
+                        {audioPaused ? "▶" : "⏸"}
                       </button>
-                    </div>
+                    )}
+                    <button
+                      type="button"
+                      className="codex-mini-ctrl stop"
+                      onClick={stopSong}
+                    >
+                      ⏹
+                    </button>
                   </div>
                 </div>
 
-                {/* FULL SONG PROGRESS BAR & DURATION READOUT */}
                 {enchorAudioPlaying && (
-                  <div className="song-progress-row">
-                    <span className="mono song-time-tag">
-                      {formatTimeSec(audioCurrentSec)}
-                    </span>
+                  <div className="codex-progress-row">
+                    <span className="mono">{formatTimeSec(audioCurrentSec)}</span>
                     <input
                       type="range"
-                      className="song-progress-slider"
+                      className="codex-progress-slider"
                       min={0}
                       max={Math.max(1, Math.round(audioDurationSec || 210))}
                       value={Math.min(
@@ -4710,203 +4593,37 @@ export default function Home() {
                       onChange={(e) => seekSong(Number(e.target.value))}
                       aria-label="Posisi pemutaran lagu"
                     />
-                    <span className="mono song-time-tag">
-                      {formatTimeSec(audioDurationSec)}
-                    </span>
+                    <span className="mono">{formatTimeSec(audioDurationSec)}</span>
                   </div>
                 )}
-
-                <div className="enchor-lyric-ticker" aria-live="polite">
-                  <span className="mono" style={{ fontSize: "10px", opacity: 0.75 }}>
-                    BUBBLE LIRIK:
-                  </span>{" "}
-                  <strong>
-                    {singingLyric ||
-                      enchorSelected.lyrics[0]?.text ||
-                      "🎤 Siap bernyanyi bersama REYA sampai lagu selesai! ♪"}
-                  </strong>
-                </div>
               </div>
             )}
 
-            {enchorResults.length > 0 && (
-              <div className="bitchord-catalog-container">
-                <div className="bitchord-catalog-header">
-                  <span
-                    className="mono"
-                    style={{
-                      fontSize: "10.5px",
-                      fontWeight: 700,
-                      color: "var(--ink-muted)",
-                    }}
-                  >
-                    PILIH LAGU ({enchorResults.length} DITEMUKAN)
-                  </span>
-                </div>
-
-                <div className="bitchord-catalog-list">
-                  {enchorResults.slice(0, 20).map((item) => {
-                    const isSelected = enchorSelected?.md5 === item.md5;
-
-                    return (
-                      <div
-                        key={`${item.chartId}-${item.md5}`}
-                        className={`bitchord-track-item ${isSelected ? "active" : ""}`}
-                        onClick={() =>
-                          void searchAndSingEnchor(item.name, item.md5, true)
-                        }
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            void searchAndSingEnchor(item.name, item.md5, true);
-                          }
-                        }}
-                      >
-                        {item.albumArtUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={item.albumArtUrl}
-                            alt={item.name}
-                            className="bitchord-track-thumb"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <div className="bitchord-track-thumb-placeholder">
-                            ♪
-                          </div>
-                        )}
-
-                        <div className="bitchord-track-info">
-                          <div className="bitchord-track-title">
-                            {isSelected ? "🎤 " : ""}
-                            {item.name}
-                          </div>
-                          <div className="bitchord-track-artist">
-                            <span>{item.artist}</span>
-                            {item.album && (
-                              <span className="bitchord-track-album">
-                                {" "}
-                                · {item.album}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="bitchord-track-meta">
-                          <span className="bitchord-play-btn">
-                            {isSelected && (singingMode || enchorAudioPlaying)
-                              ? "▶ MAIN"
-                              : "PUTAR"}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+            {enchorResults.length > 1 && (
+              <div className="codex-mini-results">
+                {enchorResults.slice(0, 8).map((item) => {
+                  const isSelected = enchorSelected?.md5 === item.md5;
+                  return (
+                    <button
+                      key={`${item.chartId}-${item.md5}`}
+                      type="button"
+                      className={`codex-result-row ${isSelected ? "active" : ""}`}
+                      onClick={() =>
+                        void searchAndSingEnchor(item.name, item.md5, true)
+                      }
+                    >
+                      <span className="codex-result-name">
+                        {isSelected ? "🎤 " : "♪ "}
+                        {item.name}
+                      </span>
+                      <span className="codex-result-artist">{item.artist}</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
-
-          <div className="dialog-section">
-            <div className="dialog-header">
-              <h2>Obrolan Teman Kerja</h2>
-              <span className="module-id">
-                {speaking
-                  ? "STATUS: MENGELUARKAN SUARA"
-                  : thinking
-                    ? "STATUS: MEMPROSES JAWABAN"
-                    : listening
-                      ? "STATUS: MEREKAM MIKROFON"
-                      : "STATUS: SIAP MENEMANI KERJA"}
-              </span>
-            </div>
-
-            <div className="messages-well" aria-live="polite">
-              {messages.slice(-6).map((message, index) => (
-                <div
-                  className={`message-row ${message.role}`}
-                  key={`${message.role}-${index}-${message.content.slice(0, 12)}`}
-                >
-                  <span className="message-tag">
-                    {message.role === "assistant" ? "R1" : "U"}
-                  </span>
-                  <p className="message-bubble">{message.content}</p>
-                </div>
-              ))}
-              {thinking && (
-                <div className="message-row assistant">
-                  <span className="message-tag">R1</span>
-                  <p className="message-bubble mono">
-                    REYA sedang berpikir...
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="prompt-strip">
-              {[
-                "Nyanyikan lagu Komang",
-                "Nyanyi lagu Wildflower",
-                "Nyanyikan lagu Bohemian Rhapsody",
-                "Semangatin aku kerja dong!",
-              ].map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  className="prompt-pill"
-                  onClick={() => void askRobot(suggestion)}
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-
-            <form
-              className={`composer-bar ${listening ? "recording" : ""}`}
-              onSubmit={(event) => {
-                event.preventDefault();
-                void askRobot();
-              }}
-            >
-              <button
-                type="button"
-                className={`hw-button ${listening ? "primary" : ""}`}
-                onClick={() => void startListening()}
-                aria-label={
-                  listening
-                    ? "Hentikan perekaman mikrofon"
-                    : "Bicara dengan REYA lewat mikrofon"
-                }
-              >
-                <IconMic />
-                <span>{listening ? "Stop Mic" : "Bicara"}</span>
-              </button>
-              <input
-                className="composer-input"
-                value={input}
-                onChange={(event) => {
-                  setInput(event.target.value);
-                  recordActivity();
-                }}
-                placeholder={
-                  listening
-                    ? "Mendengarkan suaramu..."
-                    : "Ngobrol sama REYA atau minta putarkan lagu..."
-                }
-                aria-label="Pesan untuk REYA"
-              />
-              <button
-                className="hw-button primary send-btn"
-                type="submit"
-                disabled={!input.trim() || thinking}
-              >
-                <span>Kirim</span>
-              </button>
-            </form>
-          </div>
-        </section>
+        )}
 
         {showInstrumentDeck && (
           <>

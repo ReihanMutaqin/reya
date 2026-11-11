@@ -3108,6 +3108,560 @@ button {
   height: 6px;
 }
 
+/* ============================================================================
+   CODEX-STYLE DESKTOP MASCOT (BOT-ONLY + BUBBLE + DARK CAPSULE PILL)
+   ============================================================================ */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.codex-pet-shell {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 12px;
+  position: relative;
+  overflow-x: hidden;
+}
+
+.codex-top-corner {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 60;
+}
+
+.codex-corner-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(24, 26, 28, 0.88);
+  color: #E6ECE8;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.codex-corner-pill:hover {
+  transform: translateY(-1px);
+  border-color: var(--crt-primary);
+  color: var(--crt-primary);
+}
+
+.codex-corner-pill.primary {
+  background: #181A1C;
+  border-color: var(--crt-primary);
+  color: var(--crt-primary);
+}
+
+.codex-pet-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding-top: 68px;
+  user-select: none;
+}
+
+/* Strip away the old rectangular card around the CRT so ONLY the mini robot silhouette exists */
+.codex-pet-stage .crt-housing {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  min-height: unset !important;
+  width: 176px;
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.28));
+}
+
+.codex-pet-stage .robot-head-top {
+  position: relative;
+  top: 4px;
+  left: 0;
+  right: 0;
+  width: 148px;
+  height: 26px;
+  padding: 0 8px;
+  z-index: 6;
+}
+
+.codex-pet-stage .robot-side-pod {
+  top: 58px;
+  height: 32px;
+  width: 7px;
+  background: #23282D;
+  border: 2.5px solid #0E1012;
+}
+
+.codex-pet-stage .robot-side-pod.left-pod {
+  left: 4px;
+}
+
+.codex-pet-stage .robot-side-pod.right-pod {
+  right: 4px;
+}
+
+.codex-pet-stage .crt-screen {
+  width: 158px;
+  height: 118px;
+  flex: none;
+  border-radius: 24px;
+  background: radial-gradient(circle at 50% 42%, #24312A 0%, #141B18 100%);
+  border: 4px solid #121518;
+  box-shadow:
+    inset 0 0 0 3px #2A3036,
+    inset 0 4px 14px rgba(0, 0, 0, 0.65);
+  z-index: 4;
+}
+
+/* Hide the cute paws inside the screen since we now have a full sitting chibi body */
+.codex-pet-stage .robot-paws {
+  display: none;
+}
+
+/* Full-body Chibi Sitting Torso, Arms & Dangling Feet (Codex Mascot Silhouette) */
+.robot-chibi-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: -5px;
+  z-index: 3;
+  cursor: pointer;
+}
+
+.chibi-torso {
+  width: 78px;
+  height: 54px;
+  background: linear-gradient(180deg, #262C32 0%, #1B2025 100%);
+  border: 3.5px solid #0E1012;
+  border-radius: 16px 16px 22px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.08);
+  position: relative;
+  z-index: 2;
+}
+
+.chibi-emblem {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(232, 244, 122, 0.32);
+  background: rgba(14, 16, 18, 0.55);
+  color: var(--crt-primary);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 0 0 8px rgba(232, 244, 122, 0.5);
+}
+
+.chibi-arm {
+  position: absolute;
+  top: 8px;
+  width: 24px;
+  height: 15px;
+  background: #23282E;
+  border: 3px solid #0E1012;
+  border-radius: 10px;
+  z-index: 1;
+  transition: transform 0.25s ease;
+}
+
+.chibi-arm.left-arm {
+  left: -17px;
+  transform-origin: right center;
+  transform: rotate(18deg);
+  animation: chibiArmLeftIdle 3.2s ease-in-out infinite alternate;
+}
+
+.chibi-arm.right-arm {
+  right: -17px;
+  transform-origin: left center;
+  transform: rotate(-18deg);
+  animation: chibiArmRightIdle 3.2s ease-in-out infinite alternate;
+}
+
+.is-dancing .chibi-arm.left-arm,
+.reaction-headpat .chibi-arm.left-arm,
+.reaction-tickle .chibi-arm.left-arm {
+  animation: chibiArmWaveLeft 0.4s ease-in-out infinite alternate;
+}
+
+.is-dancing .chibi-arm.right-arm,
+.reaction-headpat .chibi-arm.right-arm,
+.reaction-tickle .chibi-arm.right-arm {
+  animation: chibiArmWaveRight 0.4s ease-in-out infinite alternate;
+}
+
+@keyframes chibiArmLeftIdle {
+  0% { transform: rotate(14deg); }
+  100% { transform: rotate(26deg); }
+}
+
+@keyframes chibiArmRightIdle {
+  0% { transform: rotate(-14deg); }
+  100% { transform: rotate(-26deg); }
+}
+
+@keyframes chibiArmWaveLeft {
+  0% { transform: rotate(-28deg) translateY(-3px); }
+  100% { transform: rotate(32deg) translateY(2px); }
+}
+
+@keyframes chibiArmWaveRight {
+  0% { transform: rotate(28deg) translateY(-3px); }
+  100% { transform: rotate(-32deg) translateY(2px); }
+}
+
+.chibi-legs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: -6px;
+  z-index: 3;
+}
+
+.chibi-foot {
+  width: 24px;
+  height: 16px;
+  background: #1B2025;
+  border: 3px solid #0E1012;
+  border-radius: 10px 10px 12px 12px;
+  display: block;
+}
+
+.is-dancing .chibi-foot.left-foot {
+  animation: footTap 0.35s ease-in-out infinite alternate;
+}
+
+.is-dancing .chibi-foot.right-foot {
+  animation: footTap 0.35s ease-in-out 0.17s infinite alternate;
+}
+
+@keyframes footTap {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-4px); }
+}
+
+/* Codex-Style Dark Capsule Pill Directly Beneath REYA: [ 📝 | 🎙️ (waveform) ] */
+.codex-action-pill {
+  margin-top: 10px;
+  height: 46px;
+  min-width: 118px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #181A1C;
+  border: 1.5px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  z-index: 10;
+}
+
+.codex-pill-btn {
+  width: 44px;
+  height: 36px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: #F2F5F3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, transform 0.14s ease;
+}
+
+.codex-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #E8F47A;
+}
+
+.codex-pill-btn.active {
+  background: rgba(232, 244, 122, 0.16);
+  color: #E8F47A;
+}
+
+.codex-pill-divider {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* 5-bar Audio Waveform Icon inside Right Pill Button */
+.codex-wave-bars {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2.5px;
+  height: 18px;
+}
+
+.codex-wave-bars i {
+  display: block;
+  width: 2.5px;
+  border-radius: 2px;
+  background: currentColor;
+  transition: height 0.15s ease;
+}
+
+.codex-wave-bars i:nth-child(1) { height: 6px; }
+.codex-wave-bars i:nth-child(2) { height: 12px; }
+.codex-wave-bars i:nth-child(3) { height: 16px; }
+.codex-wave-bars i:nth-child(4) { height: 12px; }
+.codex-wave-bars i:nth-child(5) { height: 6px; }
+
+.codex-wave-bars.animating i:nth-child(1) {
+  animation: codexWaveBar 0.45s ease-in-out 0s infinite alternate;
+}
+.codex-wave-bars.animating i:nth-child(2) {
+  animation: codexWaveBar 0.45s ease-in-out 0.1s infinite alternate;
+}
+.codex-wave-bars.animating i:nth-child(3) {
+  animation: codexWaveBar 0.45s ease-in-out 0.2s infinite alternate;
+}
+.codex-wave-bars.animating i:nth-child(4) {
+  animation: codexWaveBar 0.45s ease-in-out 0.12s infinite alternate;
+}
+.codex-wave-bars.animating i:nth-child(5) {
+  animation: codexWaveBar 0.45s ease-in-out 0.04s infinite alternate;
+}
+
+@keyframes codexWaveBar {
+  0% { height: 4px; }
+  100% { height: 17px; }
+}
+
+/* Compact Dark Popover Below the Pill (Only visible when 📝 is clicked) */
+.codex-popover {
+  margin-top: 10px;
+  width: 276px;
+  padding: 10px;
+  border-radius: 16px;
+  background: #181A1C;
+  border: 1.5px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.42);
+  color: #F0F4F1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+}
+
+.codex-popover-form {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.codex-popover-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: #23272B;
+  color: #FFFFFF;
+  font-size: 11.5px;
+  outline: none;
+}
+
+.codex-popover-input:focus {
+  border-color: #E8F47A;
+}
+
+.codex-popover-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #262B30;
+  color: #FFFFFF;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.codex-popover-btn.send {
+  background: #E8F47A;
+  color: #141816;
+  border-color: #E8F47A;
+  font-weight: 700;
+}
+
+.codex-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.codex-mini-chip {
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #23272B;
+  color: #DCE2DF;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.codex-mini-chip:hover {
+  background: #E8F47A;
+  color: #141816;
+}
+
+.codex-now-playing {
+  padding: 7px 8px;
+  border-radius: 10px;
+  background: #22262A;
+  border: 1px solid rgba(232, 244, 122, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.codex-now-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.codex-now-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #E8F47A;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-now-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.codex-mini-ctrl {
+  width: 24px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: #181A1C;
+  color: #FFFFFF;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.codex-mini-ctrl.stop {
+  color: #FF7B7B;
+}
+
+.codex-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9.5px;
+  color: #AAB2AE;
+}
+
+.codex-progress-slider {
+  flex: 1;
+  height: 4px;
+  accent-color: #E8F47A;
+  cursor: pointer;
+}
+
+.codex-mini-results {
+  max-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.codex-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  border: none;
+  background: #22262A;
+  color: #E4EAE7;
+  font-size: 10.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.codex-result-row:hover,
+.codex-result-row.active {
+  background: rgba(232, 244, 122, 0.16);
+  color: #E8F47A;
+}
+
+.codex-result-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-result-artist {
+  font-size: 9.5px;
+  opacity: 0.7;
+  flex-shrink: 0;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 580px) {
   .companion-shell {
     padding: 0 10px 24px;
