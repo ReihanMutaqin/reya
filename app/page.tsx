@@ -2224,6 +2224,7 @@ export default function Home() {
       previewStartMs: number;
       hasLyrics: boolean;
       hasVocals: boolean;
+      source?: string;
     }>
   >([]);
   const [enchorSelected, setEnchorSelected] = useState<{
@@ -5281,10 +5282,12 @@ export default function Home() {
 
                     <div className="enchor-quick-chips">
                       {[
-                        "Hotel California",
                         "Wildflower",
                         "Komang",
+                        "Laskar Pelangi",
+                        "Hotel California",
                         "Bohemian Rhapsody",
+                        "Balonku Ada Lima",
                         "Fix You",
                       ].map((preset) => (
                         <button
@@ -5335,7 +5338,7 @@ export default function Home() {
                             >
                               {enchorSelected.artist}
                               {enchorSelected.charter
-                                ? ` · Charter: ${enchorSelected.charter}`
+                                ? ` · Sumber: ${enchorSelected.charter}`
                                 : ""}
                             </span>
                             <div style={{ display: "flex", gap: "6px", marginTop: "6px", flexWrap: "wrap" }}>
@@ -5387,30 +5390,108 @@ export default function Home() {
                       </div>
                     )}
 
-                    {enchorResults.length > 1 && (
-                      <div className="enchor-results-strip">
-                        {enchorResults.slice(0, 6).map((item) => {
-                          const isSelected = enchorSelected?.md5 === item.md5;
-                          return (
-                            <button
-                              key={`${item.chartId}-${item.md5}`}
-                              type="button"
-                              className={`enchor-result-btn ${isSelected ? "active" : ""}`}
-                              onClick={() =>
-                                void searchAndSingEnchor(item.name, item.md5, true)
-                              }
-                              title={`${item.name} - ${item.artist}`}
-                            >
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {isSelected ? "🎤 " : "♪ "}
-                                {item.name} - {item.artist}
-                              </span>
-                              {item.hasLyrics && (
-                                <small className="mono">LIRIK</small>
-                              )}
-                            </button>
-                          );
-                        })}
+                    {enchorResults.length > 0 && (
+                      <div className="bitchord-catalog-container">
+                        <div className="bitchord-catalog-header">
+                          <span className="mono" style={{ fontSize: "10.5px", fontWeight: 700, color: "var(--ink-muted)" }}>
+                            ALL-API BITCHORD ({enchorResults.length} LAGU DITEMUKAN)
+                          </span>
+                          <span className="bitchord-source-pills">
+                            <span className="bitchord-pill pill-spotify">Spotify</span>
+                            <span className="bitchord-pill pill-apple">Apple</span>
+                            <span className="bitchord-pill pill-enchor">Enchor</span>
+                            <span className="bitchord-pill pill-audius">Audius</span>
+                          </span>
+                        </div>
+
+                        <div className="bitchord-catalog-list">
+                          {enchorResults.slice(0, 20).map((item) => {
+                            const isSelected = enchorSelected?.md5 === item.md5;
+                            const sourceLabel =
+                              item.source === "enchor"
+                                ? "Enchor"
+                                : item.source === "itunes"
+                                  ? "Apple"
+                                  : item.source === "audius"
+                                    ? "Audius"
+                                    : item.source === "lrclib"
+                                      ? "LRC Lib"
+                                      : "Spotify";
+
+                            const sourceBadgeClass =
+                              item.source === "enchor"
+                                ? "badge-enchor"
+                                : item.source === "itunes"
+                                  ? "badge-apple"
+                                  : item.source === "audius"
+                                    ? "badge-audius"
+                                    : "badge-spotify";
+
+                            return (
+                              <div
+                                key={`${item.chartId}-${item.md5}`}
+                                className={`bitchord-track-item ${isSelected ? "active" : ""}`}
+                                onClick={() =>
+                                  void searchAndSingEnchor(item.name, item.md5, true)
+                                }
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    void searchAndSingEnchor(item.name, item.md5, true);
+                                  }
+                                }}
+                              >
+                                {item.albumArtUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={item.albumArtUrl}
+                                    alt={item.name}
+                                    className="bitchord-track-thumb"
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className="bitchord-track-thumb-placeholder">
+                                    ♪
+                                  </div>
+                                )}
+
+                                <div className="bitchord-track-info">
+                                  <div className="bitchord-track-title">
+                                    {isSelected ? "🎤 " : ""}
+                                    {item.name}
+                                  </div>
+                                  <div className="bitchord-track-artist">
+                                    <span>{item.artist}</span>
+                                    {item.album && (
+                                      <span className="bitchord-track-album">
+                                        {" "}
+                                        · {item.album}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="bitchord-track-meta">
+                                  <span className={`bitchord-badge ${sourceBadgeClass}`}>
+                                    {sourceLabel}
+                                  </span>
+                                  {item.hasLyrics && (
+                                    <span className="bitchord-badge badge-lyric">
+                                      LIRIK
+                                    </span>
+                                  )}
+                                  <span className="bitchord-play-btn">
+                                    {isSelected && (singingMode || enchorAudioPlaying)
+                                      ? "▶ MAIN"
+                                      : "PILIH"}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>

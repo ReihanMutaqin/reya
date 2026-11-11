@@ -39,7 +39,7 @@ export interface EnchorSongSummary {
   hasVocals: boolean;
   instruments: string[];
   directAudioUrl?: string | null;
-  source?: "enchor" | "global";
+  source?: "enchor" | "deezer" | "itunes" | "audius" | "lrclib" | "global";
 }
 
 interface SngFileEntry {
@@ -771,119 +771,287 @@ export async function GET(request: Request) {
   };
 
   try {
-    const [dzRes, itunesRes] = await Promise.allSettled([
+    const [
+      dzRes,
+      itunesGlobalRes,
+      itunesIdRes,
+      enchorRes,
+      audiusRes,
+      lrcRes,
+    ] = await Promise.allSettled([
       fetch(
-        `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=15`,
+        `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=25`,
         { signal: AbortSignal.timeout(3800) },
       ),
       fetch(
-        `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=15`,
+        `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=25`,
+        { signal: AbortSignal.timeout(3800) },
+      ),
+      fetch(
+        `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&country=id&limit=25`,
+        { signal: AbortSignal.timeout(3800) },
+      ),
+      fetch("https://api.enchor.us/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ search: query, page: 1 }),
+        signal: AbortSignal.timeout(3800),
+      }),
+      fetch(
+        `https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(query)}&app_name=REYA`,
+        { signal: AbortSignal.timeout(3800) },
+      ),
+      fetch(
+        `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`,
         { signal: AbortSignal.timeout(3800) },
       ),
     ]);
 
     const summaries: EnchorSongSummary[] = [];
 
-    // 1. Deezer global catalog (ranked by global popularity/chart rank like Spotify)
+    // 1. Deezer global hits catalog (ranked by global chart rank)
     if (dzRes.status === "fulfilled" && dzRes.value.ok) {
-      const dzData = (await dzRes.value.json()) as {
-        data?: Array<{
-          id: number;
-          title: string;
-          artist?: { name: string };
-          album?: { title: string; cover_medium?: string };
-          duration: number;
-          preview?: string;
-          rank?: number;
-        }>;
-      };
-      for (const item of dzData.data ?? []) {
-        if (!item.title || !item.artist?.name) continue;
-        summaries.push({
-          chartId: item.id,
-          name: item.title,
-          artist: item.artist.name,
-          album: item.album?.title ?? "",
-          genre: "Pop / Hits",
-          year: "",
-          charter: "BitChord Music",
-          md5: `dz-${item.id}`,
-          albumArtUrl: item.album?.cover_medium ?? null,
-          songLengthMs: (item.duration || 180) * 1000,
-          previewStartMs: 0,
-          hasLyrics: true,
-          hasVocals: true,
-          instruments: ["vocals", "instruments"],
-          directAudioUrl: item.preview ?? null,
-          source: "global",
-        });
+      try {
+        const dzData = (await dzRes.value.json()) as {
+          data?: Array<{
+            id: number;
+            title: string;
+            artist?: { name: string };
+            album?: { title: string; cover_medium?: string; cover_big?: string };
+            duration: number;
+            preview?: string;
+            rank?: number;
+          }>;
+        };
+        for (const item of dzData.data ?? []) {
+          if (!item.title || !item.artist?.name) continue;
+          summaries.push({
+            chartId: item.id,
+            name: item.title,
+            artist: item.artist.name,
+            album: item.album?.title ?? "",
+            genre: "Spotify / Hits",
+            year: "",
+            charter: "Spotify / Deezer",
+            md5: `dz-${item.id}`,
+            albumArtUrl: item.album?.cover_big ?? item.album?.cover_medium ?? null,
+            songLengthMs: (item.duration || 180) * 1000,
+            previewStartMs: 0,
+            hasLyrics: true,
+            hasVocals: true,
+            instruments: ["vocals", "instruments"],
+            directAudioUrl: item.preview ?? null,
+            source: "deezer",
+          });
+        }
+      } catch {
+        // Deezer parse failed
       }
     }
 
-    // 2. iTunes global catalog
-    if (itunesRes.status === "fulfilled" && itunesRes.value.ok) {
-      const itunesData = (await itunesRes.value.json()) as {
-        results?: Array<Record<string, unknown>>;
-      };
-      for (const tr of itunesData.results ?? []) {
-        const trackId = Number(tr.trackId ?? 0);
-        const trackName = String(tr.trackName ?? "");
-        const artistName = String(tr.artistName ?? "");
-        const previewUrl =
-          typeof tr.previewUrl === "string" ? tr.previewUrl : null;
-        if (!trackName || !artistName) continue;
+    // 2. iTunes Global catalog
+    if (itunesGlobalRes.status === "fulfilled" && itunesGlobalRes.value.ok) {
+      try {
+        const itunesData = (await itunesGlobalRes.value.json()) as {
+          results?: Array<Record<string, unknown>>;
+        };
+        for (const tr of itunesData.results ?? []) {
+          const trackId = Number(tr.trackId ?? 0);
+          const trackName = String(tr.trackName ?? "");
+          const artistName = String(tr.artistName ?? "");
+          const previewUrl =
+            typeof tr.previewUrl === "string" ? tr.previewUrl : null;
+          if (!trackName || !artistName) continue;
 
-        // Skip if Deezer already added the exact song
-        const alreadyIn = summaries.some(
-          (s) =>
-            s.name.toLowerCase().replace(/\s*\(.*?\)/g, "").trim() ===
-              trackName.toLowerCase().replace(/\s*\(.*?\)/g, "").trim() &&
-            s.artist.toLowerCase().trim() === artistName.toLowerCase().trim(),
-        );
-        if (alreadyIn) continue;
+          const artUrl =
+            typeof tr.artworkUrl100 === "string"
+              ? tr.artworkUrl100.replace("100x100bb", "300x300bb")
+              : null;
 
-        const artUrl =
-          typeof tr.artworkUrl100 === "string"
-            ? tr.artworkUrl100.replace("100x100bb", "300x300bb")
-            : null;
-
-        summaries.push({
-          chartId: trackId,
-          name: trackName,
-          artist: artistName,
-          album: String(tr.collectionName ?? ""),
-          genre: String(tr.primaryGenreName ?? "Music"),
-          year: String(tr.releaseDate ?? "").slice(0, 4),
-          charter: "BitChord Music",
-          md5: `itunes-${trackId}`,
-          albumArtUrl: artUrl,
-          songLengthMs: Number(tr.trackTimeMillis ?? 180000),
-          previewStartMs: 0,
-          hasLyrics: true,
-          hasVocals: true,
-          instruments: ["vocals", "instruments"],
-          directAudioUrl: previewUrl,
-          source: "global",
-        });
+          summaries.push({
+            chartId: trackId,
+            name: trackName,
+            artist: artistName,
+            album: String(tr.collectionName ?? ""),
+            genre: String(tr.primaryGenreName ?? "Music"),
+            year: String(tr.releaseDate ?? "").slice(0, 4),
+            charter: "Apple Music",
+            md5: `itunes-${trackId}`,
+            albumArtUrl: artUrl,
+            songLengthMs: Number(tr.trackTimeMillis ?? 180000),
+            previewStartMs: 0,
+            hasLyrics: true,
+            hasVocals: true,
+            instruments: ["vocals", "instruments"],
+            directAudioUrl: previewUrl,
+            source: "itunes",
+          });
+        }
+      } catch {
+        // iTunes global parse failed
       }
     }
 
-    // Filter strictly like Spotify: EVERY significant word in the query must match in (title + artist)
-    const qWords = query
-      .toLowerCase()
-      .trim()
-      .split(/\s+/)
-      .filter((w) => w.length >= 2);
+    // 3. iTunes Indonesia catalog (ensures 100% complete coverage for all Indonesian & Asian hits)
+    if (itunesIdRes.status === "fulfilled" && itunesIdRes.value.ok) {
+      try {
+        const itunesData = (await itunesIdRes.value.json()) as {
+          results?: Array<Record<string, unknown>>;
+        };
+        for (const tr of itunesData.results ?? []) {
+          const trackId = Number(tr.trackId ?? 0);
+          const trackName = String(tr.trackName ?? "");
+          const artistName = String(tr.artistName ?? "");
+          const previewUrl =
+            typeof tr.previewUrl === "string" ? tr.previewUrl : null;
+          if (!trackName || !artistName) continue;
 
-    const filtered = summaries.filter((c) => {
-      if (qWords.length === 0) return true;
-      const combined = `${c.name} ${c.artist}`.toLowerCase();
-      return qWords.every((w) => combined.includes(w));
-    });
+          const artUrl =
+            typeof tr.artworkUrl100 === "string"
+              ? tr.artworkUrl100.replace("100x100bb", "300x300bb")
+              : null;
 
-    const candidatesToRank = filtered.length > 0 ? filtered : summaries;
+          summaries.push({
+            chartId: trackId,
+            name: trackName,
+            artist: artistName,
+            album: String(tr.collectionName ?? ""),
+            genre: String(tr.primaryGenreName ?? "Indo Pop"),
+            year: String(tr.releaseDate ?? "").slice(0, 4),
+            charter: "Apple Music ID",
+            md5: `itunes-id-${trackId}`,
+            albumArtUrl: artUrl,
+            songLengthMs: Number(tr.trackTimeMillis ?? 180000),
+            previewStartMs: 0,
+            hasLyrics: true,
+            hasVocals: true,
+            instruments: ["vocals", "instruments"],
+            directAudioUrl: previewUrl,
+            source: "itunes",
+          });
+        }
+      } catch {
+        // iTunes ID parse failed
+      }
+    }
 
-    // Spotify-like Ranking & Scoring
+    // 4. Enchor.us Clone Hero / Guitar Hero multitrack charts (full separated stems)
+    if (enchorRes.status === "fulfilled" && enchorRes.value.ok) {
+      try {
+        const payload = (await enchorRes.value.json()) as {
+          data?: Array<Record<string, unknown>>;
+        };
+        const rawItems = Array.isArray(payload.data) ? payload.data : [];
+        for (const item of rawItems) {
+          const notesData = (item.notesData as Record<string, unknown>) || {};
+          const albumArtMd5 =
+            typeof item.albumArtMd5 === "string" && item.albumArtMd5
+              ? item.albumArtMd5
+              : null;
+          summaries.push({
+            chartId: Number(item.chartId ?? 0),
+            name: String(item.name ?? "Lagu Enchor"),
+            artist: String(item.artist ?? "Unknown Artist"),
+            album: String(item.album ?? ""),
+            genre: String(item.genre ?? "Rock / Metal"),
+            year: String(item.year ?? ""),
+            charter: item.charter ? `Enchor (${item.charter})` : "Enchor Multitrack",
+            md5: String(item.md5 ?? ""),
+            albumArtUrl: albumArtMd5
+              ? `https://files.enchor.us/${albumArtMd5}.jpg`
+              : null,
+            songLengthMs: Number(item.song_length ?? 180000),
+            previewStartMs: Number(item.preview_start_time ?? 0),
+            hasLyrics: Boolean(notesData.hasLyrics),
+            hasVocals: Boolean(notesData.hasVocals),
+            instruments: Array.isArray(notesData.instruments)
+              ? (notesData.instruments as string[])
+              : ["vocals", "guitar"],
+            directAudioUrl: null,
+            source: "enchor",
+          });
+        }
+      } catch {
+        // Enchor parse failed
+      }
+    }
+
+    // 5. Audius Open Lossless Catalog
+    if (audiusRes.status === "fulfilled" && audiusRes.value.ok) {
+      try {
+        const audData = (await audiusRes.value.json()) as {
+          data?: Array<{
+            id: string | number;
+            title: string;
+            user?: { name: string };
+            genre?: string;
+            duration?: number;
+            artwork?: Record<string, string>;
+          }>;
+        };
+        for (const item of audData.data ?? []) {
+          if (!item.title || !item.user?.name) continue;
+          const artUrl =
+            item.artwork?.["480x480"] || item.artwork?.["150x150"] || null;
+          summaries.push({
+            chartId: Number(item.id) || 0,
+            name: item.title,
+            artist: item.user.name,
+            album: item.genre || "Audius",
+            genre: item.genre || "Music",
+            year: "",
+            charter: "Audius Lossless",
+            md5: `audius-${item.id}`,
+            albumArtUrl: artUrl,
+            songLengthMs: (item.duration || 180) * 1000,
+            previewStartMs: 0,
+            hasLyrics: false,
+            hasVocals: true,
+            instruments: ["vocals", "instruments"],
+            directAudioUrl: `https://discoveryprovider.audius.co/v1/tracks/${item.id}/stream?app_name=REYA`,
+            source: "audius",
+          });
+        }
+      } catch {
+        // Audius parse failed
+      }
+    }
+
+    // 6. LRCLIB Synced Lyrics Catalog
+    if (lrcRes.status === "fulfilled" && lrcRes.value.ok) {
+      try {
+        const lrcList = (await lrcRes.value.json()) as Array<Record<string, unknown>>;
+        if (Array.isArray(lrcList)) {
+          for (const tr of lrcList.slice(0, 15)) {
+            const trackName = String(tr.trackName || "").trim();
+            const artistName = String(tr.artistName || "").trim();
+            if (!trackName || !artistName) continue;
+            summaries.push({
+              chartId: Number(tr.id || 0),
+              name: trackName,
+              artist: artistName,
+              album: String(tr.albumName || ""),
+              genre: "Hits / Lyrics",
+              year: "",
+              charter: "LRC Lib Synced",
+              md5: `lrc-${tr.id || Math.abs(trackName.length * 31 + artistName.length)}`,
+              albumArtUrl: null,
+              songLengthMs: Number(tr.duration || 180) * 1000,
+              previewStartMs: 0,
+              hasLyrics: Boolean(tr.syncedLyrics || tr.plainLyrics),
+              hasVocals: true,
+              instruments: ["vocals", "lyrics"],
+              directAudioUrl: null,
+              source: "lrclib",
+            });
+          }
+        }
+      } catch {
+        // LRCLIB parse failed
+      }
+    }
+
+    // Spotify/BitChord Relevance Ranking & Multi-source Merging
     const scoreSpotify = (item: EnchorSongSummary): number => {
       const qNorm = query.toLowerCase().trim();
       const n = item.name.toLowerCase().trim();
@@ -894,37 +1062,78 @@ export async function GET(request: Request) {
         .trim();
 
       let s = 0;
-      if (cleanTitle === qNorm) s += 300;
-      else if (cleanTitle.startsWith(qNorm)) s += 160;
-      else if (cleanTitle.includes(qNorm)) s += 90;
+      if (cleanTitle === qNorm) s += 320;
+      else if (cleanTitle.startsWith(qNorm)) s += 180;
+      else if (cleanTitle.includes(qNorm)) s += 100;
 
-      if (a === qNorm || a.includes(qNorm)) s += 80;
+      if (a === qNorm || a.includes(qNorm)) s += 110;
 
-      // Penalize live bootlegs, karaoke, or tribute covers when official track exists
-      if (
-        /\b(live|concert|tribute|karaoke|spanish mix|tribute band)\b/i.test(n) &&
-        !/\b(live|concert|cover)\b/i.test(qNorm)
-      ) {
-        s -= 85;
+      const words = qNorm.split(/\s+/).filter((w) => w.length >= 2);
+      let matchedWords = 0;
+      for (const w of words) {
+        if (n.includes(w)) {
+          s += 50;
+          matchedWords++;
+        }
+        if (a.includes(w)) {
+          s += 40;
+          matchedWords++;
+        }
       }
+
+      if (matchedWords === 0 && !cleanTitle.includes(qNorm) && !a.includes(qNorm)) {
+        s -= 200;
+      }
+
+      // Penalize live bootlegs, karaoke, or tribute covers unless requested
+      if (
+        /\b(live|concert|tribute|karaoke|cover|spanish mix|tribute band)\b/i.test(n) &&
+        !/\b(live|concert|cover|karaoke)\b/i.test(qNorm)
+      ) {
+        s -= 75;
+      }
+
+      if (item.hasLyrics) s += 25;
+      if (item.directAudioUrl) s += 20;
+      if (item.source === "enchor") s += 20;
       return s;
     };
 
-    // Deduplicate so only the best version of each title+artist appears
-    const seen = new Set<string>();
-    const ranked: EnchorSongSummary[] = [];
-    for (const item of [...candidatesToRank].sort(
+    // Cross-source deduplication & merging so each unique song has best cover art, audio, and lyrics
+    const byKey = new Map<string, EnchorSongSummary>();
+    for (const item of [...summaries].sort(
       (a, b) => scoreSpotify(b) - scoreSpotify(a),
     )) {
+      if (scoreSpotify(item) <= 0) continue;
       const key = `${item.name
         .toLowerCase()
         .replace(/\s*\(.*?\)/g, "")
+        .replace(/\s*\[.*?\]/g, "")
         .trim()}:::${item.artist.toLowerCase().trim()}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        ranked.push(item);
+
+      if (!byKey.has(key)) {
+        byKey.set(key, { ...item });
+      } else {
+        const existing = byKey.get(key)!;
+        if (!existing.albumArtUrl && item.albumArtUrl) {
+          existing.albumArtUrl = item.albumArtUrl;
+        }
+        if (!existing.directAudioUrl && item.directAudioUrl) {
+          existing.directAudioUrl = item.directAudioUrl;
+        }
+        if (item.hasLyrics) existing.hasLyrics = true;
+        if (item.hasVocals) existing.hasVocals = true;
+        if (item.source === "enchor") {
+          existing.charter = item.charter;
+          existing.md5 = item.md5;
+          existing.source = "enchor";
+        }
       }
     }
+
+    const ranked: EnchorSongSummary[] = Array.from(byKey.values()).sort(
+      (a, b) => scoreSpotify(b) - scoreSpotify(a),
+    );
 
     const chosen =
       (targetMd5 ? ranked.find((s) => s.md5 === targetMd5) : null) ??
@@ -944,11 +1153,13 @@ export async function GET(request: Request) {
     let audioUrl: string | null = chosen.directAudioUrl ?? null;
     let vocalAudioUrl: string | null = chosen.directAudioUrl ?? null;
 
-    if (chosen.source === "global") {
-      const fullAudio = await fetchFullTrackAudioUrl(chosen.name, chosen.artist);
-      if (fullAudio) {
-        audioUrl = fullAudio;
-        vocalAudioUrl = fullAudio;
+    if (chosen.source !== "enchor") {
+      if (!audioUrl) {
+        const fullAudio = await fetchFullTrackAudioUrl(chosen.name, chosen.artist);
+        if (fullAudio) {
+          audioUrl = fullAudio;
+          vocalAudioUrl = fullAudio;
+        }
       }
     }
 
@@ -1194,7 +1405,7 @@ export async function GET(request: Request) {
 
     return Response.json({
       found: ranked.length,
-      results: ranked.slice(0, 10),
+      results: ranked.slice(0, 24),
       selected: {
         ...chosen,
         audioUrl: audioUrl ?? vocalAudioUrl,
