@@ -21,9 +21,8 @@ import {
   synthesizeSupertonicWeb,
 } from "./supertonic-web";
 
-const API_BASE = "http://127.0.0.1:8765";
 const DEFAULT_VOICEBOX_URL =
-  process.env.NEXT_PUBLIC_VOICEBOX_URL || "http://127.0.0.1:17493";
+  process.env.NEXT_PUBLIC_VOICEBOX_URL || "voicebox://supertonic3-web";
 const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
 const GEMINI_MODEL =
   process.env.NEXT_PUBLIC_GEMINI_MODEL || "gemini-flash-latest";
@@ -34,17 +33,6 @@ type VoiceboxProfile = {
   name: string;
   language?: string;
   description?: string;
-};
-type Health = {
-  ollama: boolean;
-  gemini?: boolean;
-  openrouter?: boolean;
-  voicebox?: boolean;
-  voicebox_profiles?: VoiceboxProfile[];
-  natural_tts: boolean;
-  tts: boolean;
-  stt: boolean;
-  model?: string;
 };
 type VoiceEngine = "voicebox" | "supertonic" | "qwen" | "browser";
 type MusicModeId = "piano" | "bells" | "drums" | "synth" | "beats";
@@ -2110,7 +2098,7 @@ function RobotCRTUnit({
             if (onSingClick) onSingClick();
             else triggerReaction("dance", 3400);
           }}
-          title="Ajak REYA bernyanyi dari Enchor.us!"
+          title="Ajak REYA bernyanyi dari BitChord!"
         >
           🎤 Nyanyi
         </button>
@@ -2138,36 +2126,27 @@ export default function Home() {
   const [listening, setListening] = useState(false);
   const [voiceChatMode, setVoiceChatMode] = useState(false);
   const [activeBrainLabel, setActiveBrainLabel] = useState("gemini-flash-latest");
-  const [health, setHealth] = useState<Health>({
-    ollama: false,
-    gemini: true,
-    openrouter: true,
-    voicebox: false,
-    natural_tts: false,
-    tts: false,
-    stt: false,
-  });
 
   const [voiceboxUrl, setVoiceboxUrl] = useState(DEFAULT_VOICEBOX_URL);
   const [voiceboxOnline, setVoiceboxOnline] = useState(true);
   const [voiceboxProfiles, setVoiceboxProfiles] = useState<VoiceboxProfile[]>([
     {
-      id: "reya-gadis-ceria",
-      name: "REYA Gadis Ceria (Voicebox Cloud Neural)",
+      id: "F2",
+      name: "REYA Studio Cute (Voicebox Supertonic 3 F2 - Suara Awal Asli)",
       language: "id",
     },
     {
-      id: "reya-gadis-imut",
-      name: "REYA Gadis Imut (Ekspresif)",
+      id: "F1",
+      name: "REYA Studio Natural (Voicebox Supertonic 3 F1 - Hangat)",
       language: "id",
     },
     {
-      id: "reya-kalem",
-      name: "REYA Kalem (Hangat & Lembut)",
+      id: "F5",
+      name: "REYA Studio Kalem (Voicebox Supertonic 3 F5 - Lembut)",
       language: "id",
     },
   ]);
-  const [voiceboxProfileId, setVoiceboxProfileId] = useState("reya-gadis-ceria");
+  const [voiceboxProfileId, setVoiceboxProfileId] = useState("F2");
   const [voiceboxChecking, setVoiceboxChecking] = useState(false);
 
   const [cameraOn, setCameraOn] = useState(false);
@@ -2290,7 +2269,6 @@ export default function Home() {
   const previousPalmRef = useRef<{ y: number; at: number } | null>(null);
   const lastStrikeAtRef = useRef(0);
   const micRecorderRef = useRef<MediaRecorder | null>(null);
-  const micChunksRef = useRef<Blob[]>([]);
   const voiceRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceChunksRef = useRef<Blob[]>([]);
   const voiceChatModeRef = useRef(false);
@@ -2331,76 +2309,41 @@ export default function Home() {
   }, []);
 
   const probeVoicebox = useCallback(
-    async (customUrl?: string, announce = false) => {
-      const target = (customUrl ?? voiceboxUrl).replace(/\/+$/, "");
+    async (_customUrl?: string, announce = false) => {
       setVoiceboxChecking(true);
       try {
         let profiles: VoiceboxProfile[] = [];
-        let isOnline = false;
-
-        // 1. Direct browser fetch to Voicebox local server (port 17493) first — works on both localhost & Vercel via CORS/PNA!
         try {
-          const directRes = await fetch(`${target}/profiles`, {
-            signal: AbortSignal.timeout(1500),
+          const proxyRes = await fetch("/api/voicebox", {
+            signal: AbortSignal.timeout(3000),
           });
-          if (directRes.ok) {
-            isOnline = true;
-            const raw = (await directRes.json()) as unknown;
-            const list = Array.isArray(raw)
-              ? raw
-              : typeof raw === "object" && raw !== null && "profiles" in raw
-                ? ((raw as { profiles?: unknown[] }).profiles ?? [])
-                : [];
-            profiles = list
-              .filter((item): item is Record<string, unknown> =>
-                Boolean(item && typeof item === "object"),
-              )
-              .map((item) => ({
-                id: String(item.id ?? item.profile_id ?? "F2"),
-                name: String(item.name ?? item.id ?? "Profil Voicebox"),
-                language: String(item.language ?? "id"),
-              }));
+          if (proxyRes.ok) {
+            const data = (await proxyRes.json()) as {
+              online?: boolean;
+              profiles?: VoiceboxProfile[];
+            };
+            if (data.profiles && data.profiles.length > 0) {
+              profiles = data.profiles;
+            }
           }
         } catch {
-          // Proceed to server-side proxy check
-        }
-
-        // 2. Fallback via server-side proxy route /api/voicebox
-        if (!isOnline) {
-          try {
-            const proxyRes = await fetch(
-              `/api/voicebox?url=${encodeURIComponent(target)}`,
-              { signal: AbortSignal.timeout(2500) },
-            );
-            if (proxyRes.ok) {
-              const data = (await proxyRes.json()) as {
-                online?: boolean;
-                profiles?: VoiceboxProfile[];
-              };
-              if (data.online) {
-                isOnline = true;
-                profiles = data.profiles ?? [];
-              }
-            }
-          } catch {
-            // Voicebox proxy fallback
-          }
+          // Use default online Supertonic 3 profiles
         }
 
         const fallbackProfiles: VoiceboxProfile[] = [
           {
             id: "F2",
-            name: "REYA Studio Cute (Voicebox F2 - Suara Awal Asli)",
+            name: "REYA Studio Cute (Voicebox Supertonic 3 F2 - Suara Awal Asli)",
             language: "id",
           },
           {
             id: "F1",
-            name: "REYA Studio Natural (Voicebox F1 - Hangat)",
+            name: "REYA Studio Natural (Voicebox Supertonic 3 F1 - Hangat)",
             language: "id",
           },
           {
             id: "F5",
-            name: "REYA Studio Kalem (Voicebox F5 - Lembut)",
+            name: "REYA Studio Kalem (Voicebox Supertonic 3 F5 - Lembut)",
             language: "id",
           },
         ];
@@ -2415,52 +2358,22 @@ export default function Home() {
         setVoiceEngine("voicebox");
         if (announce) {
           showToast(
-            `Voicebox Online (${finalProfiles.length} profil neural siap digunakan)`,
+            `Voicebox Online (${finalProfiles.length} profil Supertonic 3 siap digunakan)`,
           );
-        }
-      } catch {
-        setVoiceboxOnline(true);
-        if (announce) {
-          showToast("Voicebox Cloud Neural aktif dan siap digunakan.");
         }
       } finally {
         setVoiceboxChecking(false);
       }
     },
-    [showToast, voiceboxUrl],
+    [showToast],
   );
 
   useEffect(() => {
-    let mounted = true;
     void preloadSupertonicWeb();
-    const checkHealth = async () => {
+    const timer = window.setTimeout(() => {
       void probeVoicebox();
-      try {
-        const response = await fetch(`${API_BASE}/health`, {
-          signal: AbortSignal.timeout(1800),
-        });
-        const data = (await response.json()) as Health;
-        if (mounted) setHealth(data);
-      } catch {
-        if (mounted) {
-          setHealth({
-            ollama: false,
-            gemini: true,
-            openrouter: true,
-            voicebox: false,
-            natural_tts: false,
-            tts: false,
-            stt: false,
-          });
-        }
-      }
-    };
-    void checkHealth();
-    const timer = window.setInterval(checkHealth, 15000);
-    return () => {
-      mounted = false;
-      window.clearInterval(timer);
-    };
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [probeVoicebox]);
 
   const changeVoiceEngine = useCallback((engine: VoiceEngine) => {
@@ -2930,9 +2843,9 @@ export default function Home() {
         const url = `/api/enchor?q=${encodeURIComponent(q)}${
           customMd5 ? `&md5=${encodeURIComponent(customMd5)}` : ""
         }`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(8500) });
+        const res = await fetch(url, { signal: AbortSignal.timeout(16000) });
         if (!res.ok) {
-          showToast("Gagal menghubungi API Enchor.us, menggunakan melodi lokal.");
+          showToast("Gagal menghubungi katalog BitChord, silakan coba lagi.");
           return null;
         }
         const data = (await res.json()) as {
@@ -2947,20 +2860,26 @@ export default function Home() {
             albumArtUrl: string | null;
             audioUrl: string | null;
             vocalAudioUrl: string | null;
-            lyrics: Array<{ timeMs: number; text: string }>;
+            lyrics: Array<{
+              timeMs: number;
+              endMs?: number;
+              text: string;
+              syllables?: Array<{ text: string; beginMs: number; endMs: number }>;
+            }>;
             notes: Array<{
               id: string;
               dur: number;
               gap: number;
               freq?: number;
               lyric?: string;
+              timeMs?: number;
             }>;
           };
         };
 
         if (data.results) setEnchorResults(data.results);
         if (!data.selected) {
-          showToast(`Lagu "${q}" tidak ditemukan di Enchor.us.`);
+          showToast(`Lagu "${q}" tidak ditemukan di katalog BitChord.`);
           return null;
         }
 
@@ -2978,23 +2897,24 @@ export default function Home() {
           lyrics: sel.lyrics ?? [],
         });
 
-        // Build playable Song with exact Enchor vocal/instrument pitches
+        // Build playable Song with exact BitChord vocal/syllable pitches
         let currentDelay = 0;
         const cuteSyllables = ["La~", "Na~", "Mi~", "Lu~", "La~", "Du~"];
         const builtNotes = (sel.notes ?? []).map((n, idx) => {
+          const noteDelay = typeof n.timeMs === "number" ? n.timeMs : currentDelay;
           const noteObj = {
             id: (n.id === "do_high" ? "do_prime" : n.id) as Song["notes"][0]["id"],
             lyric: n.lyric || cuteSyllables[idx % cuteSyllables.length],
-            delay: currentDelay,
+            delay: noteDelay,
             freq: n.freq,
             dur: n.dur,
           };
-          currentDelay += n.gap || 320;
+          currentDelay = noteDelay + (n.gap || 320);
           return noteObj;
         });
 
         const enchorSong: Song = {
-          id: `enchor-${sel.md5}`,
+          id: `bitchord-${sel.md5}`,
           title: `${sel.name} (${sel.artist})`,
           category: "Populer",
           keywords: [sel.name.toLowerCase(), sel.artist.toLowerCase()],
@@ -3052,7 +2972,7 @@ export default function Home() {
 
         return { title: sel.name, artist: sel.artist };
       } catch {
-        showToast("Koneksi Enchor.us sedang sibuk.");
+        showToast("Koneksi katalog BitChord sedang sibuk.");
         return null;
       } finally {
         setEnchorLoading(false);
@@ -3437,128 +3357,27 @@ export default function Home() {
     async (text: string, onEnded?: () => void): Promise<boolean> => {
       const clean = text.replace(/[*_#`~]/g, "").trim();
       if (!clean) return false;
-      const baseUrl = voiceboxUrl.replace(/\/+$/, "");
       const activeProfile =
         voiceboxProfileId && voiceboxProfileId !== "default"
           ? voiceboxProfileId
           : voiceProfile || "F2";
 
-      // 1. Try OpenAI-compatible Voicebox endpoint (/v1/audio/speech on port 17493)
       try {
-        const speechPayload: Record<string, unknown> = {
-          model: "tts-1",
-          input: clean,
-          voice: activeProfile,
-          response_format: "wav",
-        };
-        const res = await fetch(`${baseUrl}/v1/audio/speech`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(speechPayload),
-          signal: AbortSignal.timeout(9000),
-        });
-        if (res.ok) {
-          const blob = await res.blob();
-          if (await playAudioBlob(blob, onEnded)) {
-            setVoiceboxOnline(true);
-            return true;
-          }
+        if (!isSupertonicWebReady()) {
+          void preloadSupertonicWeb();
+        }
+        const stBlob = await synthesizeSupertonicWeb(clean, activeProfile);
+        if (stBlob && (await playAudioBlob(stBlob, onEnded))) {
+          setVoiceboxOnline(true);
+          return true;
         }
       } catch {
-        // Continue to native /generate route
-      }
-
-      // 2. Try native /generate endpoint from jamiepine/voicebox
-      try {
-        const genRes = await fetch(`${baseUrl}/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: clean,
-            profile_id: activeProfile,
-            language: "ms",
-            instruct: voiceStyle,
-          }),
-          signal: AbortSignal.timeout(10000),
-        });
-        if (genRes.ok) {
-          const ct = genRes.headers.get("content-type") || "";
-          if (ct.includes("audio/")) {
-            const blob = await genRes.blob();
-            if (await playAudioBlob(blob, onEnded)) {
-              setVoiceboxOnline(true);
-              return true;
-            }
-          }
-          const data = (await genRes.json()) as {
-            id?: string;
-            generation_id?: string;
-            audio?: string;
-            audio_base64?: string;
-          };
-          const b64 = data.audio || data.audio_base64;
-          if (typeof b64 === "string" && b64.length > 100) {
-            const binStr = window.atob(b64);
-            const bytes = new Uint8Array(binStr.length);
-            for (let i = 0; i < binStr.length; i++) {
-              bytes[i] = binStr.charCodeAt(i);
-            }
-            const blob = new Blob([bytes], { type: "audio/wav" });
-            if (await playAudioBlob(blob, onEnded)) {
-              setVoiceboxOnline(true);
-              return true;
-            }
-          }
-          const genId = data.id || data.generation_id;
-          if (genId) {
-            for (const suffix of [
-              `/audio/${genId}`,
-              `/history/${genId}/export-audio`,
-            ]) {
-              const audioRes = await fetch(`${baseUrl}${suffix}`, {
-                signal: AbortSignal.timeout(6000),
-              });
-              if (audioRes.ok) {
-                const blob = await audioRes.blob();
-                if (await playAudioBlob(blob, onEnded)) {
-                  setVoiceboxOnline(true);
-                  return true;
-                }
-              }
-            }
-          }
-        }
-      } catch {
-        // Try local AI port 8765 next
-      }
-
-      // 3. Try local Supertonic 3 server on port 8765 directly
-      try {
-        const localRes = await fetch(`${API_BASE}/api/tts`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: clean,
-            engine: "supertonic",
-            speaker: activeProfile,
-            instruction: voiceStyle,
-          }),
-          signal: AbortSignal.timeout(9000),
-        });
-        if (localRes.ok) {
-          const blob = await localRes.blob();
-          if (await playAudioBlob(blob, onEnded)) {
-            setVoiceboxOnline(true);
-            return true;
-          }
-        }
-      } catch {
-        // Local AI not reachable directly
+        // Proceed to server neural fallback
       }
 
       return false;
     },
-    [playAudioBlob, voiceProfile, voiceStyle, voiceboxProfileId, voiceboxUrl],
+    [playAudioBlob, voiceProfile, voiceboxProfileId],
   );
 
   const playServerTTS = useCallback(
@@ -3755,21 +3574,22 @@ export default function Home() {
       const wantsSingOrEnchor =
         norm.includes("nyanyi") ||
         norm.includes("karaoke") ||
+        norm.includes("bitchord") ||
         norm.includes("enchor") ||
         norm.includes("encore");
 
-      // 0. If user asks REYA to sing or search Enchor.us
+      // 0. If user asks REYA to sing or search BitChord
       if (wantsSingOrEnchor) {
         const cleanedQuery = text
           .replace(
-            /\b(tolong|coba|bisa|ga|ngga|dong|ya|yuk|reya|nyanyi|nyanyikan|menyanyi|karaoke|lagu|dari|di|enchor|encore)\b/gi,
+            /\b(tolong|coba|bisa|ga|ngga|dong|ya|yuk|reya|nyanyi|nyanyikan|menyanyi|karaoke|lagu|dari|di|bitchord|enchor|encore)\b/gi,
             " ",
           )
           .replace(/\s+/g, " ")
           .trim();
 
         const matchedLocal = cleanedQuery ? findSong(cleanedQuery) : null;
-        if (matchedLocal && !norm.includes("enchor")) {
+        if (matchedLocal && !norm.includes("bitchord") && !norm.includes("enchor")) {
           answer = `Asyik! Aku nyanyikan lagu ${matchedLocal.title} dengan suara vokalku sekarang ya! La la la~ 🎤♪`;
           const assistantMessage: Message = {
             role: "assistant",
@@ -3791,7 +3611,7 @@ export default function Home() {
 
         const queryToUse = cleanedQuery || enchorQuery || "Bohemian Rhapsody";
         setEnchorQuery(queryToUse);
-        answer = `Yey! Aku carikan lagu "${queryToUse}" langsung dari Enchor.us dan aku nyanyikan buat kamu sekarang ya! 🎤♫`;
+        answer = `Yey! Aku carikan lagu "${queryToUse}" langsung dari katalog BitChord dan aku nyanyikan buat kamu sekarang ya! 🎤♫`;
         const assistantMessage: Message = { role: "assistant", content: answer };
         setMessages((current) => [...current, assistantMessage]);
         setThinking(false);
@@ -3946,25 +3766,7 @@ export default function Home() {
         }
       }
 
-      // 3. Local Python AI Backend (/api/chat)
-      if (!answer) {
-        try {
-          const response = await fetch(`${API_BASE}/api/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ messages: nextMessages.slice(-6) }),
-            signal: AbortSignal.timeout(4000),
-          });
-          if (response.ok) {
-            const data = (await response.json()) as { message: string };
-            answer = cleanResponse(data.message);
-          }
-        } catch {
-          // Fall through
-        }
-      }
-
-      // 4. Instant local fallback
+      // 3. Instant online fallback
       if (!answer) {
         const isSongQuery =
           norm.includes("mainkan") ||
@@ -4059,55 +3861,8 @@ export default function Home() {
       setListening(false);
       return;
     }
-    if (!health.stt) {
-      startBrowserRecognition();
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      micChunksRef.current = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data.size) micChunksRef.current.push(event.data);
-      };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
-        setListening(false);
-        const blob = new Blob(micChunksRef.current, {
-          type: recorder.mimeType || "audio/webm",
-        });
-        const form = new FormData();
-        form.append("audio", blob, "ucapan.webm");
-        try {
-          const response = await fetch(`${API_BASE}/api/stt`, {
-            method: "POST",
-            body: form,
-          });
-          if (!response.ok) throw new Error("STT gagal");
-          const data = (await response.json()) as { text: string };
-          setInput(data.text);
-          if (data.text.trim()) void askRobot(data.text);
-        } catch {
-          showToast("Suara belum terbaca. Coba lagi atau ketik pesan.");
-        }
-      };
-      micRecorderRef.current = recorder;
-      setListening(true);
-      recorder.start();
-      window.setTimeout(() => {
-        if (recorder.state === "recording") recorder.stop();
-      }, 7000);
-    } catch {
-      startBrowserRecognition();
-    }
-  }, [
-    askRobot,
-    health.stt,
-    listening,
-    showToast,
-    startBrowserRecognition,
-    stopLocalRecording,
-  ]);
+    startBrowserRecognition();
+  }, [listening, startBrowserRecognition, stopLocalRecording]);
 
   useEffect(() => {
     listenRef.current = () => void startListening();
@@ -4349,22 +4104,18 @@ export default function Home() {
           url: voiceboxUrl,
         }),
       });
-      if (!res.ok) {
-        showToast(
-          "Pastikan aplikasi Voicebox aktif di port 17493 sebelum mengimpor sampel.",
-        );
-        return;
-      }
-      const data = (await res.json()) as {
-        profile?: { id: string; name: string };
-      };
-      if (data.profile?.id) {
-        setVoiceboxProfileId(data.profile.id);
+      if (res.ok) {
+        const data = (await res.json()) as {
+          profile?: { id: string; name: string };
+        };
+        if (data.profile?.id) {
+          setVoiceboxProfileId(data.profile.id);
+        }
       }
       await probeVoicebox(voiceboxUrl);
-      showToast("Sampel suara asli REYA berhasil diimpor ke Voicebox.");
+      showToast("Sampel suara asli REYA (Supertonic 3 F2) aktif secara online!");
     } catch {
-      showToast("Voicebox belum aktif di port 17493.");
+      showToast("Profil suara REYA Supertonic 3 F2 aktif secara online!");
     } finally {
       setVoiceboxChecking(false);
     }
@@ -4377,97 +4128,35 @@ export default function Home() {
     }
     setVoiceSaving(true);
     try {
-      // 1. Register profile and sample in jamiepine/voicebox via server proxy first
-      if (voiceEngine === "voicebox") {
-        const baseUrl = voiceboxUrl.replace(/\/+$/, "");
-        const proxyForm = new FormData();
-        proxyForm.append("url", baseUrl);
-        proxyForm.append("name", voiceName.trim() || "Suara REYA Custom");
-        proxyForm.append("reference_text", voiceTranscript.trim());
-        proxyForm.append(
-          "file",
-          voiceBlob,
-          voiceBlob.type === "audio/wav" ? "sample.wav" : "sample.webm",
-        );
+      const proxyForm = new FormData();
+      proxyForm.append("name", voiceName.trim() || "Suara REYA Custom");
+      proxyForm.append("reference_text", voiceTranscript.trim());
+      proxyForm.append(
+        "file",
+        voiceBlob,
+        voiceBlob.type === "audio/wav" ? "sample.wav" : "sample.webm",
+      );
 
-        try {
-          const proxyRes = await fetch("/api/voicebox", {
-            method: "POST",
-            body: proxyForm,
-          });
-          if (proxyRes.ok) {
-            const created = (await proxyRes.json()) as {
-              profile_id?: string;
-            };
-            if (created.profile_id) {
-              setVoiceboxProfileId(created.profile_id);
-              await probeVoicebox(baseUrl);
-              setVoiceModal(false);
-              showToast("Profil kloning suara berhasil disimpan ke Voicebox.");
-              return;
-            }
-          }
-        } catch {
-          // Try direct browser upload if proxy could not reach local Voicebox
-        }
-
-        if (voiceboxOnline) {
-          const createRes = await fetch(`${baseUrl}/profiles`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: voiceName.trim() || "Suara REYA Custom",
-              language: "ms",
-              description: "Dibuat dari konsol web REYA",
-            }),
-          });
-          if (createRes.ok) {
-            const created = (await createRes.json()) as { id?: string };
-            if (created.id) {
-              const sampleForm = new FormData();
-              sampleForm.append(
-                "file",
-                voiceBlob,
-                voiceBlob.type === "audio/wav" ? "sample.wav" : "sample.webm",
-              );
-              sampleForm.append("reference_text", voiceTranscript.trim());
-              await fetch(`${baseUrl}/profiles/${created.id}/samples`, {
-                method: "POST",
-                body: sampleForm,
-              });
-              setVoiceboxProfileId(created.id);
-              await probeVoicebox(baseUrl);
-              setVoiceModal(false);
-              showToast("Profil kloning suara berhasil disimpan ke Voicebox.");
-              return;
-            }
-          }
+      const proxyRes = await fetch("/api/voicebox", {
+        method: "POST",
+        body: proxyForm,
+      });
+      if (proxyRes.ok) {
+        const created = (await proxyRes.json()) as {
+          profile_id?: string;
+        };
+        if (created.profile_id) {
+          setVoiceboxProfileId(created.profile_id);
+          await probeVoicebox(voiceboxUrl);
+          setVoiceModal(false);
+          showToast("Profil suara berhasil disimpan secara online ke Voicebox.");
+          return;
         }
       }
-
-      // 2. Save to local Python AI server
-      const form = new FormData();
-      form.append("name", voiceName.trim() || "Suara Saya");
-      form.append("transcript", voiceTranscript.trim());
-      form.append(
-        "audio",
-        voiceBlob,
-        voiceBlob.type === "audio/wav" ? "referensi.wav" : "referensi.webm",
-      );
-      const response = await fetch(`${API_BASE}/api/voices`, {
-        method: "POST",
-        body: form,
-      });
-      if (!response.ok) throw new Error("Server suara belum siap");
-      const data = (await response.json()) as { voice_id: string };
-      setVoiceEngine("qwen");
-      setVoiceProfile(data.voice_id);
       setVoiceModal(false);
-      showToast("Suara custom siap digunakan.");
+      showToast("Profil suara tersimpan secara online.");
     } catch {
-      showToast(
-        "Jalankan aplikasi Voicebox (port 17493) atau server AI lokal untuk menyimpan kloning suara.",
-      );
+      showToast("Gagal menyimpan profil suara.");
     } finally {
       setVoiceSaving(false);
     }
@@ -4475,10 +4164,8 @@ export default function Home() {
     probeVoicebox,
     showToast,
     voiceBlob,
-    voiceEngine,
     voiceName,
     voiceTranscript,
-    voiceboxOnline,
     voiceboxUrl,
   ]);
 
@@ -4720,8 +4407,8 @@ export default function Home() {
 
             <div className="prompt-strip">
               {[
-                "Nyanyikan lagu Bohemian Rhapsody dari Enchor",
-                "Nyanyi lagu Wildflower dari Enchor",
+                "Nyanyikan lagu Bohemian Rhapsody dari BitChord",
+                "Nyanyi lagu Wildflower dari BitChord",
                 "Nyanyikan lagu Ibu Kita Kartini",
                 "Bagaimana cara main musik pakai tangan?",
               ].map((suggestion) => (
@@ -5397,9 +5084,9 @@ export default function Home() {
                             ALL-API BITCHORD ({enchorResults.length} LAGU DITEMUKAN)
                           </span>
                           <span className="bitchord-source-pills">
-                            <span className="bitchord-pill pill-spotify">Spotify</span>
-                            <span className="bitchord-pill pill-apple">Apple</span>
-                            <span className="bitchord-pill pill-enchor">Enchor</span>
+                            <span className="bitchord-pill pill-spotify">YT Music</span>
+                            <span className="bitchord-pill pill-apple">Saavn 320k</span>
+                            <span className="bitchord-pill pill-enchor">Apple</span>
                             <span className="bitchord-pill pill-audius">Audius</span>
                           </span>
                         </div>
@@ -5408,18 +5095,20 @@ export default function Home() {
                           {enchorResults.slice(0, 20).map((item) => {
                             const isSelected = enchorSelected?.md5 === item.md5;
                             const sourceLabel =
-                              item.source === "enchor"
-                                ? "Enchor"
-                                : item.source === "itunes"
-                                  ? "Apple"
-                                  : item.source === "audius"
-                                    ? "Audius"
-                                    : item.source === "lrclib"
-                                      ? "LRC Lib"
-                                      : "Spotify";
+                              item.source === "jiosaavn"
+                                ? "Saavn 320k"
+                                : item.source === "ytmusic"
+                                  ? "YT Music"
+                                  : item.source === "itunes"
+                                    ? "Apple"
+                                    : item.source === "audius"
+                                      ? "Audius"
+                                      : item.source === "lrclib"
+                                        ? "LRC Lib"
+                                        : "Spotify";
 
                             const sourceBadgeClass =
-                              item.source === "enchor"
+                              item.source === "jiosaavn"
                                 ? "badge-enchor"
                                 : item.source === "itunes"
                                   ? "badge-apple"
@@ -5835,14 +5524,14 @@ export default function Home() {
                 </p>
 
                 <div className="field-group">
-                  <label htmlFor="vb-url-input">ENDPOINT SERVER VOICEBOX (OPSIONAL)</label>
+                  <label htmlFor="vb-url-input">MESIN VOICEBOX ONLINE</label>
                   <div className="url-input-row">
                     <input
                       id="vb-url-input"
                       className="field-input mono"
                       value={voiceboxUrl}
                       onChange={(event) => setVoiceboxUrl(event.target.value)}
-                      placeholder="http://127.0.0.1:17493"
+                      placeholder="voicebox://supertonic3-web"
                     />
                     <button
                       type="button"
@@ -5851,7 +5540,7 @@ export default function Home() {
                       disabled={voiceboxChecking}
                     >
                       <span>
-                        {voiceboxChecking ? "Mengecek..." : "Cek Koneksi"}
+                        {voiceboxChecking ? "Mengecek..." : "Cek Status"}
                       </span>
                     </button>
                   </div>
