@@ -4407,8 +4407,53 @@ export default function Home() {
           }}
         />
 
-        {/* CODEX-STYLE DARK CAPSULE PILL UNDER THE BOT: [ 📝 | 🎙️ (waveform) ] */}
+        {/* CODEX-STYLE DARK CAPSULE PILL UNDER THE BOT: [ ♥ | ★ | 🧋 | 🕺 | 📝 | 🎙️ ] */}
         <div className="codex-action-pill" role="toolbar" aria-label="Kontrol REYA">
+          <button
+            type="button"
+            className="codex-pill-btn"
+            onClick={() => handleRobotPoke("headpat")}
+            title="Elus kepala REYA (Senang & Manja)"
+            aria-label="Elus kepala REYA"
+          >
+            ♥
+          </button>
+          <button
+            type="button"
+            className="codex-pill-btn"
+            onClick={() => handleRobotPoke("tickle")}
+            title="Kilik perut REYA (Geli & Ketawa)"
+            aria-label="Kilik perut REYA"
+          >
+            ★
+          </button>
+          <button
+            type="button"
+            className="codex-pill-btn"
+            onClick={() => handleRobotPoke("snack")}
+            title="Kasih Boba & Energi ke REYA"
+            aria-label="Kasih Boba ke REYA"
+          >
+            🧋
+          </button>
+          <button
+            type="button"
+            className="codex-pill-btn"
+            onClick={() => {
+              if (singingMode || enchorAudioPlaying) {
+                stopSong();
+              } else {
+                void searchAndSingEnchor(enchorQuery || "Komang");
+              }
+            }}
+            title="Ajak REYA Nyanyi & Joget"
+            aria-label="Ajak REYA Nyanyi"
+          >
+            🕺
+          </button>
+
+          <span className="codex-pill-divider" aria-hidden="true" />
+
           <button
             type="button"
             className={`codex-pill-btn ${drawerOpen ? "active" : ""}`}
