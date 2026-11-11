@@ -6,14 +6,8 @@ const DEFAULT_VOICEBOX_URL =
   process.env.NEXT_PUBLIC_VOICEBOX_URL ||
   "http://127.0.0.1:17493";
 
-const GEMINI_TTS_MODELS = [
-  "gemini-3.8-flash-lite-tts",
-  "gemini-3.1-flash-tts-preview",
-  "gemini-3.8-flash-tts",
-  "gemini-2.5-flash-preview-tts",
-];
-
-const exhaustedModels = new Map<string, number>();
+const LOCAL_AI_URL =
+  process.env.LOCAL_AI_URL || "http://127.0.0.1:8765";
 
 // LRU cache for synthesized speech to provide instant playback
 const ttsCache = new Map<string, { buffer: ArrayBuffer; contentType: string }>();
@@ -30,47 +24,27 @@ function storeInCache(
   ttsCache.set(key, val);
 }
 
-function pcm16ToWav(
-  pcmBuffer: Buffer,
-  sampleRate = 24000,
-  numChannels = 1,
-): ArrayBuffer {
-  // If the buffer already starts with a RIFF WAV header, return it untouched
-  if (
-    pcmBuffer.byteLength > 44 &&
-    pcmBuffer.subarray(0, 4).toString("ascii") === "RIFF"
-  ) {
-    return pcmBuffer.buffer.slice(
-      pcmBuffer.byteOffset,
-      pcmBuffer.byteOffset + pcmBuffer.byteLength,
-    );
+function mapProfileToSupertonicSpeaker(profileOrSpeaker?: string): string {
+  const norm = (profileOrSpeaker || "").trim();
+  const upper = norm.toUpperCase();
+  if (["F1", "F2", "F3", "F4", "F5"].includes(upper)) {
+    return upper;
   }
-
-  const bitsPerSample = 16;
-  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
-  const blockAlign = (numChannels * bitsPerSample) / 8;
-  const dataSize = pcmBuffer.byteLength;
-  const wavBuffer = Buffer.alloc(44 + dataSize);
-
-  wavBuffer.write("RIFF", 0, "ascii");
-  wavBuffer.writeUInt32LE(36 + dataSize, 4);
-  wavBuffer.write("WAVE", 8, "ascii");
-  wavBuffer.write("fmt ", 12, "ascii");
-  wavBuffer.writeUInt32LE(16, 16);
-  wavBuffer.writeUInt16LE(1, 20);
-  wavBuffer.writeUInt16LE(numChannels, 22);
-  wavBuffer.writeUInt32LE(sampleRate, 24);
-  wavBuffer.writeUInt32LE(byteRate, 28);
-  wavBuffer.writeUInt16LE(blockAlign, 32);
-  wavBuffer.writeUInt16LE(bitsPerSample, 34);
-  wavBuffer.write("data", 36, "ascii");
-  wavBuffer.writeUInt32LE(dataSize, 40);
-  pcmBuffer.copy(wavBuffer, 44);
-
-  return wavBuffer.buffer.slice(
-    wavBuffer.byteOffset,
-    wavBuffer.byteOffset + wavBuffer.byteLength,
-  );
+  const low = norm.toLowerCase();
+  if (low.includes("kalem") || low.includes("lembut") || low === "f5") {
+    return "F5";
+  }
+  if (low.includes("natural") || low.includes("hangat") || low === "f1") {
+    return "F1";
+  }
+  if (low.includes("jernih") || low === "f3") {
+    return "F3";
+  }
+  if (low.includes("dinamis") || low === "f4") {
+    return "F4";
+  }
+  // Default to F2 (Lily Cute — exact voice of CONTOH-SUARA-RAYA-CUTE.wav)
+  return "F2";
 }
 
 async function resolveVoiceboxProfileId(
@@ -86,7 +60,7 @@ async function resolveVoiceboxProfileId(
   }
   try {
     const res = await fetch(`${baseUrl}/profiles`, {
-      signal: AbortSignal.timeout(350),
+      signal: AbortSignal.timeout(800),
     });
     if (!res.ok) return undefined;
     const data = (await res.json()) as unknown;
@@ -95,6 +69,18 @@ async function resolveVoiceboxProfileId(
       : typeof data === "object" && data !== null && "profiles" in data
         ? ((data as { profiles?: unknown[] }).profiles ?? [])
         : [];
+    const mappedSpeaker = mapProfileToSupertonicSpeaker(requestedProfileId);
+    const matched = list.find(
+      (item): item is Record<string, unknown> =>
+        Boolean(
+          item &&
+            typeof item === "object" &&
+            (item.id === mappedSpeaker || item.profile_id === mappedSpeaker),
+        ),
+    );
+    if (matched) {
+      return String(matched.id ?? matched.profile_id);
+    }
     const first = list.find(
       (item): item is Record<string, unknown> =>
         Boolean(item && typeof item === "object" && (item.id || item.profile_id)),
@@ -117,26 +103,30 @@ async function tryLocalVoiceboxDaemon(
   const baseUrl = (voiceboxUrl || DEFAULT_VOICEBOX_URL).replace(/\/+$/, "");
   if (baseUrl.startsWith("voicebox://")) return null;
 
+  const speaker = mapProfileToSupertonicSpeaker(profileId);
+  const cacheKey = `vb-local:${baseUrl}:${speaker}:${text}`;
+  const cached = ttsCache.get(cacheKey);
+  if (cached) return cached;
+
   try {
     const ping = await fetch(`${baseUrl}/profiles`, {
-      signal: AbortSignal.timeout(350),
+      signal: AbortSignal.timeout(800),
     });
     if (!ping.ok) return null;
   } catch {
     return null;
   }
 
-  const resolvedProfileId = await resolveVoiceboxProfileId(baseUrl, profileId);
+  const resolvedProfileId =
+    (await resolveVoiceboxProfileId(baseUrl, profileId)) || speaker;
 
   try {
     const speechPayload: Record<string, unknown> = {
       model: "tts-1",
       input: text,
+      voice: resolvedProfileId,
       response_format: "wav",
     };
-    if (resolvedProfileId) {
-      speechPayload.voice = resolvedProfileId;
-    }
 
     const res = await fetch(`${baseUrl}/v1/audio/speech`, {
       method: "POST",
@@ -147,21 +137,19 @@ async function tryLocalVoiceboxDaemon(
     if (res.ok) {
       const buf = await res.arrayBuffer();
       if (buf.byteLength > 200) {
-        return {
+        const result = {
           buffer: buf,
           contentType: res.headers.get("content-type") || "audio/wav",
         };
+        storeInCache(cacheKey, result);
+        return result;
       }
     }
   } catch {
     // Try native /generate route next
   }
 
-  if (!resolvedProfileId) {
-    return null;
-  }
-
-  for (const langCode of ["ms", "en"]) {
+  for (const langCode of ["id", "ms", "en"]) {
     try {
       const genRes = await fetch(`${baseUrl}/generate`, {
         method: "POST",
@@ -181,7 +169,9 @@ async function tryLocalVoiceboxDaemon(
       if (ct.includes("audio/")) {
         const buf = await genRes.arrayBuffer();
         if (buf.byteLength > 200) {
-          return { buffer: buf, contentType: ct };
+          const result = { buffer: buf, contentType: ct };
+          storeInCache(cacheKey, result);
+          return result;
         }
       }
 
@@ -195,13 +185,15 @@ async function tryLocalVoiceboxDaemon(
       const b64 = data.audio || data.audio_base64;
       if (typeof b64 === "string" && b64.length > 100) {
         const binary = Buffer.from(b64, "base64");
-        return {
+        const result = {
           buffer: binary.buffer.slice(
             binary.byteOffset,
             binary.byteOffset + binary.byteLength,
           ),
           contentType: "audio/wav",
         };
+        storeInCache(cacheKey, result);
+        return result;
       }
 
       const genId = data.id || data.generation_id;
@@ -216,11 +208,13 @@ async function tryLocalVoiceboxDaemon(
           if (audioRes.ok) {
             const buf = await audioRes.arrayBuffer();
             if (buf.byteLength > 200) {
-              return {
+              const result = {
                 buffer: buf,
                 contentType:
                   audioRes.headers.get("content-type") || "audio/wav",
               };
+              storeInCache(cacheKey, result);
+              return result;
             }
           }
         }
@@ -233,34 +227,66 @@ async function tryLocalVoiceboxDaemon(
   return null;
 }
 
-// Pure-TS Voicebox Cloud Neural Engine (runs 100% natively on Vercel Node.js with zero Python!)
+// 2. Local Supertonic 3 Server (Port 8765 — exact CONTOH-SUARA-RAYA-CUTE.wav 44.1kHz engine)
+async function tryLocalSupertonicServer(
+  text: string,
+  profileOrSpeaker?: string,
+  instruct?: string,
+): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
+  const speaker = mapProfileToSupertonicSpeaker(profileOrSpeaker);
+  const cacheKey = `supertonic-local:${speaker}:${text}`;
+  const cached = ttsCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch(`${LOCAL_AI_URL}/api/tts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        engine: "supertonic",
+        speaker,
+        instruction: instruct || undefined,
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (res.ok) {
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > 200) {
+        const result = {
+          buffer: buf,
+          contentType: res.headers.get("content-type") || "audio/wav",
+        };
+        storeInCache(cacheKey, result);
+        return result;
+      }
+    }
+  } catch {
+    // Local AI server not running
+  }
+  return null;
+}
+
+// 3. Pure-TS Voicebox Cloud Neural Engine (non-Google natural fallback when running on Vercel without local daemon)
 async function tryVoiceboxCloudNeuralTTS(
   text: string,
   profileOrSpeaker?: string,
 ): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
-  // Primary: the original warm Gemini "Aoede (Ceria)" voice REYA launched with
-  const natural = await tryGeminiNeuralTTS(text, profileOrSpeaker);
-  if (natural) return natural;
-
   const norm = (profileOrSpeaker || "").toLowerCase().trim();
 
-  // Fallback: Gadis Neural at its natural pitch (pitch shifting made it sound robotic)
   let voice = "id-ID-GadisNeural";
   let rate = "+0%";
-  let pitch = "+0Hz";
+  const pitch = "+0Hz";
 
   if (norm.includes("imut") || norm.includes("cute") || norm === "f2") {
     voice = "id-ID-GadisNeural";
     rate = "+2%";
-    pitch = "+0Hz";
-  } else if (norm.includes("kalem") || norm === "f1" || norm.includes("zephyr")) {
+  } else if (norm.includes("kalem") || norm === "f1" || norm === "f5") {
     voice = "id-ID-GadisNeural";
     rate = "-4%";
-    pitch = "+0Hz";
   } else if (norm.includes("ardi") || norm === "m1") {
     voice = "id-ID-ArdiNeural";
     rate = "+4%";
-    pitch = "+0Hz";
   }
 
   const cacheKey = `vbcloud:${voice}:${rate}:${pitch}:${text}`;
@@ -276,113 +302,10 @@ async function tryVoiceboxCloudNeuralTTS(
   return null;
 }
 
-function mapSpeakerToGeminiVoice(speaker?: string): string {
-  const norm = (speaker || "").toLowerCase().trim();
-  if (norm.includes("zephyr") || norm === "f1" || norm.includes("kalem")) {
-    return "Zephyr";
-  }
-  if (norm.includes("kore") || norm === "f3") {
-    return "Kore";
-  }
-  if (norm.includes("leda") || norm === "f5") {
-    return "Leda";
-  }
-  return "Aoede";
-}
-
-async function tryGeminiNeuralTTS(
-  text: string,
-  speaker?: string,
-): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
-  const apiKey = (
-    process.env.GEMINI_API_KEY ||
-    process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
-    ""
-  ).trim();
-  if (!apiKey) return null;
-
-  const cleanText = text
-    .replace(/[*_#`~[\]♪♫]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 600);
-  if (!cleanText) return null;
-
-  const voiceName = mapSpeakerToGeminiVoice(speaker);
-  const cacheKey = `gemini:${voiceName}:${cleanText}`;
-  const cached = ttsCache.get(cacheKey);
-  if (cached) return cached;
-
-  for (const model of GEMINI_TTS_MODELS) {
-    if ((exhaustedModels.get(model) || 0) > Date.now()) {
-      continue;
-    }
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: cleanText }] }],
-          generationConfig: {
-            responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName,
-                },
-              },
-            },
-          },
-        }),
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (!res.ok) {
-        if (res.status === 429) {
-          exhaustedModels.set(model, Date.now() + 180000);
-        }
-        continue;
-      }
-
-      const data = (await res.json()) as {
-        candidates?: Array<{
-          content?: {
-            parts?: Array<{
-              inlineData?: {
-                mimeType?: string;
-                data?: string;
-              };
-            }>;
-          };
-        }>;
-      };
-
-      const inlineData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
-      const b64 = inlineData?.data;
-      if (!b64 || b64.length < 100) continue;
-
-      const pcmBytes = Buffer.from(b64, "base64");
-      const wavArrayBuffer = pcm16ToWav(pcmBytes, 24000, 1);
-
-      const result = {
-        buffer: wavArrayBuffer,
-        contentType: "audio/wav",
-      };
-      storeInCache(cacheKey, result);
-      return result;
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-}
-
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const text = (url.searchParams.get("text") || "").trim();
-  const profileId = url.searchParams.get("profile_id") || "reya-gadis-ceria";
+  const profileId = url.searchParams.get("profile_id") || "F2";
   const speaker = url.searchParams.get("speaker") || profileId;
   const instruct = url.searchParams.get("instruction") || undefined;
   const voiceboxUrl =
@@ -395,7 +318,7 @@ export async function GET(request: Request) {
     );
   }
 
-  // 1. Local jamiepine/voicebox daemon if running
+  // 1. Local Voicebox daemon (port 17493)
   const localVb = await tryLocalVoiceboxDaemon(
     text,
     voiceboxUrl,
@@ -407,33 +330,37 @@ export async function GET(request: Request) {
       status: 200,
       headers: {
         "Content-Type": localVb.contentType,
-        "X-Voice-Provider": "voicebox",
+        "X-Voice-Provider": "voicebox-local",
         "Cache-Control": "no-store",
       },
     });
   }
 
-  // 2. Voicebox Cloud Neural Engine (Pure-TS Gadis Neural 24kHz — always online on Vercel!)
+  // 2. Local Supertonic 3 44.1kHz server (port 8765 — exact CONTOH-SUARA-RAYA-CUTE.wav voice)
+  const localSt = await tryLocalSupertonicServer(
+    text,
+    speaker || profileId,
+    instruct,
+  );
+  if (localSt) {
+    return new Response(localSt.buffer, {
+      status: 200,
+      headers: {
+        "Content-Type": localSt.contentType,
+        "X-Voice-Provider": "voicebox-supertonic3",
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  // 3. Voicebox Cloud Neural fallback (only when local daemon & browser ONNX are unavailable)
   const cloudVb = await tryVoiceboxCloudNeuralTTS(text, profileId || speaker);
   if (cloudVb) {
     return new Response(cloudVb.buffer, {
       status: 200,
       headers: {
         "Content-Type": cloudVb.contentType,
-        "X-Voice-Provider": "voicebox",
-        "Cache-Control": "public, max-age=86400",
-      },
-    });
-  }
-
-  // 3. Gemini Neural Audio TTS backup
-  const geminiAudio = await tryGeminiNeuralTTS(text, speaker);
-  if (geminiAudio) {
-    return new Response(geminiAudio.buffer, {
-      status: 200,
-      headers: {
-        "Content-Type": geminiAudio.contentType,
-        "X-Voice-Provider": "voicebox",
+        "X-Voice-Provider": "voicebox-cloud",
         "Cache-Control": "public, max-age=86400",
       },
     });
@@ -457,10 +384,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Teks kosong" }, { status: 400 });
     }
 
-    const profileId = body.profile_id || body.speaker || "reya-gadis-ceria";
+    const profileId = body.profile_id || body.speaker || "F2";
     const voiceboxUrl = body.voicebox_url || DEFAULT_VOICEBOX_URL;
 
-    // 1. Local jamiepine/voicebox daemon if running
+    // 1. Local Voicebox daemon (port 17493)
     const localVb = await tryLocalVoiceboxDaemon(
       text,
       voiceboxUrl,
@@ -472,13 +399,30 @@ export async function POST(request: Request) {
         status: 200,
         headers: {
           "Content-Type": localVb.contentType,
-          "X-Voice-Provider": "voicebox",
+          "X-Voice-Provider": "voicebox-local",
           "Cache-Control": "no-store",
         },
       });
     }
 
-    // 2. Voicebox Cloud Neural Engine (Pure-TS Gadis Neural 24kHz — always online on Vercel!)
+    // 2. Local Supertonic 3 44.1kHz server (port 8765 — exact CONTOH-SUARA-RAYA-CUTE.wav voice)
+    const localSt = await tryLocalSupertonicServer(
+      text,
+      body.speaker || profileId,
+      body.instruction,
+    );
+    if (localSt) {
+      return new Response(localSt.buffer, {
+        status: 200,
+        headers: {
+          "Content-Type": localSt.contentType,
+          "X-Voice-Provider": "voicebox-supertonic3",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    // 3. Voicebox Cloud Neural fallback (only when local daemon & browser ONNX are unavailable)
     const cloudVb = await tryVoiceboxCloudNeuralTTS(
       text,
       body.speaker || profileId,
@@ -488,23 +432,7 @@ export async function POST(request: Request) {
         status: 200,
         headers: {
           "Content-Type": cloudVb.contentType,
-          "X-Voice-Provider": "voicebox",
-          "Cache-Control": "public, max-age=86400",
-        },
-      });
-    }
-
-    // 3. Gemini Neural Audio TTS backup
-    const geminiAudio = await tryGeminiNeuralTTS(
-      text,
-      body.speaker || profileId,
-    );
-    if (geminiAudio) {
-      return new Response(geminiAudio.buffer, {
-        status: 200,
-        headers: {
-          "Content-Type": geminiAudio.contentType,
-          "X-Voice-Provider": "voicebox",
+          "X-Voice-Provider": "voicebox-cloud",
           "Cache-Control": "public, max-age=86400",
         },
       });

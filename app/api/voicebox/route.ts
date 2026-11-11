@@ -17,25 +17,25 @@ interface VoiceboxProfileItem {
 
 const CLOUD_VOICEBOX_PROFILES: VoiceboxProfileItem[] = [
   {
-    id: "reya-gadis-ceria",
-    name: "REYA Studio Ceria (Voicebox Cloud Neural)",
+    id: "F2",
+    name: "REYA Studio Cute (Voicebox F2 - Suara Awal Asli)",
     language: "id",
-    description: "Suara neural perempuan muda Indonesia yang ceria, ramah, dan natural",
-    default_engine: "voicebox-cloud",
+    description: "Suara asli CONTOH-SUARA-RAYA-CUTE.wav (Supertonic 3 F2 Lily 44.1kHz)",
+    default_engine: "supertonic-3",
   },
   {
-    id: "reya-gadis-imut",
-    name: "REYA Cute Expressive (Sampel Studio REYA)",
+    id: "F1",
+    name: "REYA Studio Natural (Voicebox F1 - Hangat)",
     language: "id",
-    description: "Karakter suara ekspresif dan imut ala REYA Studio",
-    default_engine: "voicebox-cloud",
+    description: "Suara perempuan Indonesia natural & hangat (Supertonic 3 F1 44.1kHz)",
+    default_engine: "supertonic-3",
   },
   {
-    id: "reya-kalem",
-    name: "REYA Kalem & Hangat (Voicebox Cloud)",
+    id: "F5",
+    name: "REYA Studio Kalem (Voicebox F5 - Lembut)",
     language: "id",
-    description: "Intonasi tenang, lembut, dan hangat untuk diskusi santai",
-    default_engine: "voicebox-cloud",
+    description: "Intonasi tenang, lembut, dan hangat (Supertonic 3 F5 44.1kHz)",
+    default_engine: "supertonic-3",
   },
 ];
 

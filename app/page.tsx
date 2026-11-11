@@ -15,6 +15,11 @@ import {
   findSong,
   generateMelodyForSong,
 } from "./songs";
+import {
+  isSupertonicWebReady,
+  preloadSupertonicWeb,
+  synthesizeSupertonicWeb,
+} from "./supertonic-web";
 
 const API_BASE = "http://127.0.0.1:8765";
 const DEFAULT_VOICEBOX_URL =
@@ -2332,69 +2337,69 @@ export default function Home() {
         let profiles: VoiceboxProfile[] = [];
         let isOnline = false;
 
-        // 1. Try via server-side proxy route /api/voicebox first (bypasses CORS & auto-seeds default REYA sample)
+        // 1. Direct browser fetch to Voicebox local server (port 17493) first — works on both localhost & Vercel via CORS/PNA!
         try {
-          const proxyRes = await fetch(
-            `/api/voicebox?url=${encodeURIComponent(target)}`,
-            { signal: AbortSignal.timeout(3000) },
-          );
-          if (proxyRes.ok) {
-            const data = (await proxyRes.json()) as {
-              online?: boolean;
-              profiles?: VoiceboxProfile[];
-            };
-            if (data.online) {
-              isOnline = true;
-              profiles = data.profiles ?? [];
-            }
+          const directRes = await fetch(`${target}/profiles`, {
+            signal: AbortSignal.timeout(1500),
+          });
+          if (directRes.ok) {
+            isOnline = true;
+            const raw = (await directRes.json()) as unknown;
+            const list = Array.isArray(raw)
+              ? raw
+              : typeof raw === "object" && raw !== null && "profiles" in raw
+                ? ((raw as { profiles?: unknown[] }).profiles ?? [])
+                : [];
+            profiles = list
+              .filter((item): item is Record<string, unknown> =>
+                Boolean(item && typeof item === "object"),
+              )
+              .map((item) => ({
+                id: String(item.id ?? item.profile_id ?? "F2"),
+                name: String(item.name ?? item.id ?? "Profil Voicebox"),
+                language: String(item.language ?? "id"),
+              }));
           }
         } catch {
-          // Proceed to direct check
+          // Proceed to server-side proxy check
         }
 
-        // 2. Fallback to direct browser fetch to Voicebox local server (port 17493)
+        // 2. Fallback via server-side proxy route /api/voicebox
         if (!isOnline) {
           try {
-            const directRes = await fetch(`${target}/profiles`, {
-              signal: AbortSignal.timeout(1800),
-            });
-            if (directRes.ok) {
-              isOnline = true;
-              const raw = (await directRes.json()) as unknown;
-              const list = Array.isArray(raw)
-                ? raw
-                : typeof raw === "object" && raw !== null && "profiles" in raw
-                  ? ((raw as { profiles?: unknown[] }).profiles ?? [])
-                  : [];
-              profiles = list
-                .filter((item): item is Record<string, unknown> =>
-                  Boolean(item && typeof item === "object"),
-                )
-                .map((item) => ({
-                  id: String(item.id ?? item.profile_id ?? "default"),
-                  name: String(item.name ?? item.id ?? "Profil Voicebox"),
-                  language: String(item.language ?? "ms"),
-                }));
+            const proxyRes = await fetch(
+              `/api/voicebox?url=${encodeURIComponent(target)}`,
+              { signal: AbortSignal.timeout(2500) },
+            );
+            if (proxyRes.ok) {
+              const data = (await proxyRes.json()) as {
+                online?: boolean;
+                profiles?: VoiceboxProfile[];
+              };
+              if (data.online) {
+                isOnline = true;
+                profiles = data.profiles ?? [];
+              }
             }
           } catch {
-            // Voicebox offline
+            // Voicebox proxy fallback
           }
         }
 
         const fallbackProfiles: VoiceboxProfile[] = [
           {
-            id: "reya-gadis-ceria",
-            name: "REYA Gadis Ceria (Voicebox Cloud Neural)",
+            id: "F2",
+            name: "REYA Studio Cute (Voicebox F2 - Suara Awal Asli)",
             language: "id",
           },
           {
-            id: "reya-gadis-imut",
-            name: "REYA Gadis Imut (Ekspresif)",
+            id: "F1",
+            name: "REYA Studio Natural (Voicebox F1 - Hangat)",
             language: "id",
           },
           {
-            id: "reya-kalem",
-            name: "REYA Kalem (Hangat & Lembut)",
+            id: "F5",
+            name: "REYA Studio Kalem (Voicebox F5 - Lembut)",
             language: "id",
           },
         ];
@@ -2426,6 +2431,7 @@ export default function Home() {
 
   useEffect(() => {
     let mounted = true;
+    void preloadSupertonicWeb();
     const checkHealth = async () => {
       void probeVoicebox();
       try {
@@ -3427,21 +3433,23 @@ export default function Home() {
   );
 
   const playVoiceboxDirect = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (text: string, onEnded?: () => void): Promise<boolean> => {
       const clean = text.replace(/[*_#`~]/g, "").trim();
       if (!clean) return false;
       const baseUrl = voiceboxUrl.replace(/\/+$/, "");
+      const activeProfile =
+        voiceboxProfileId && voiceboxProfileId !== "default"
+          ? voiceboxProfileId
+          : voiceProfile || "F2";
 
-      // 1. Try OpenAI-compatible Voicebox endpoint (/v1/audio/speech)
+      // 1. Try OpenAI-compatible Voicebox endpoint (/v1/audio/speech on port 17493)
       try {
         const speechPayload: Record<string, unknown> = {
           model: "tts-1",
           input: clean,
+          voice: activeProfile,
           response_format: "wav",
         };
-        if (voiceboxProfileId && voiceboxProfileId !== "default") {
-          speechPayload.voice = voiceboxProfileId;
-        }
         const res = await fetch(`${baseUrl}/v1/audio/speech`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3450,7 +3458,7 @@ export default function Home() {
         });
         if (res.ok) {
           const blob = await res.blob();
-          if (await playAudioBlob(blob)) {
+          if (await playAudioBlob(blob, onEnded)) {
             setVoiceboxOnline(true);
             return true;
           }
@@ -3460,26 +3468,23 @@ export default function Home() {
       }
 
       // 2. Try native /generate endpoint from jamiepine/voicebox
-      if (!voiceboxProfileId || voiceboxProfileId === "default") {
-        return false;
-      }
       try {
         const genRes = await fetch(`${baseUrl}/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             text: clean,
-            profile_id: voiceboxProfileId,
+            profile_id: activeProfile,
             language: "ms",
             instruct: voiceStyle,
           }),
-          signal: AbortSignal.timeout(12000),
+          signal: AbortSignal.timeout(10000),
         });
         if (genRes.ok) {
           const ct = genRes.headers.get("content-type") || "";
           if (ct.includes("audio/")) {
             const blob = await genRes.blob();
-            if (await playAudioBlob(blob)) {
+            if (await playAudioBlob(blob, onEnded)) {
               setVoiceboxOnline(true);
               return true;
             }
@@ -3498,7 +3503,7 @@ export default function Home() {
               bytes[i] = binStr.charCodeAt(i);
             }
             const blob = new Blob([bytes], { type: "audio/wav" });
-            if (await playAudioBlob(blob)) {
+            if (await playAudioBlob(blob, onEnded)) {
               setVoiceboxOnline(true);
               return true;
             }
@@ -3514,7 +3519,7 @@ export default function Home() {
               });
               if (audioRes.ok) {
                 const blob = await audioRes.blob();
-                if (await playAudioBlob(blob)) {
+                if (await playAudioBlob(blob, onEnded)) {
                   setVoiceboxOnline(true);
                   return true;
                 }
@@ -3523,12 +3528,36 @@ export default function Home() {
           }
         }
       } catch {
-        // Voicebox not reachable directly from browser
+        // Try local AI port 8765 next
+      }
+
+      // 3. Try local Supertonic 3 server on port 8765 directly
+      try {
+        const localRes = await fetch(`${API_BASE}/api/tts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: clean,
+            engine: "supertonic",
+            speaker: activeProfile,
+            instruction: voiceStyle,
+          }),
+          signal: AbortSignal.timeout(9000),
+        });
+        if (localRes.ok) {
+          const blob = await localRes.blob();
+          if (await playAudioBlob(blob, onEnded)) {
+            setVoiceboxOnline(true);
+            return true;
+          }
+        }
+      } catch {
+        // Local AI not reachable directly
       }
 
       return false;
     },
-    [playAudioBlob, voiceStyle, voiceboxProfileId, voiceboxUrl],
+    [playAudioBlob, voiceProfile, voiceStyle, voiceboxProfileId, voiceboxUrl],
   );
 
   const playServerTTS = useCallback(
@@ -3636,38 +3665,44 @@ export default function Home() {
 
   const speak = useCallback(
     async (text: string, onEnded?: () => void) => {
-      // 1. Instant Web Speech Synthesis when browser engine is selected (0ms delay)
+      // 1. Instant Web Speech Synthesis when browser engine is explicitly selected
       if (voiceEngine === "browser") {
         void browserSpeak(text, onEnded);
         return;
       }
 
-      // 2. Fast Server-side /api/tts (Voicebox Cloud Neural + Local Voicebox + Gemini Neural)
+      // 2. Direct Voicebox Studio / Supertonic 3 (127.0.0.1:17493 or 8765) — works on both localhost & Vercel!
+      const vbOk = await playVoiceboxDirect(text, onEnded);
+      if (vbOk) return;
+
+      // 3. Browser-side Supertonic 3 ONNX Web (exact CONTOH-SUARA-RAYA-CUTE.wav F2 voice on Vercel even without PC server!)
+      if (isSupertonicWebReady()) {
+        const stBlob = await synthesizeSupertonicWeb(
+          text,
+          voiceboxProfileId || voiceProfile || "F2",
+        );
+        if (stBlob && (await playAudioBlob(stBlob, onEnded))) {
+          return;
+        }
+      } else {
+        void preloadSupertonicWeb();
+      }
+
+      // 4. Server-side /api/tts (Local Voicebox -> Local Supertonic 3 -> Natural Gadis Neural)
       const serverOk = await playServerTTS(text, onEnded);
       if (serverOk) return;
 
-      // 3. Direct jamiepine/voicebox synthesis ONLY when running on localhost
-      const isLocalHost =
-        typeof window !== "undefined" &&
-        (window.location.hostname === "localhost" ||
-          window.location.hostname === "127.0.0.1");
-      if (voiceboxOnline && isLocalHost) {
-        const vbOk = await playVoiceboxDirect(text);
-        if (vbOk) {
-          onEnded?.();
-          return;
-        }
-      }
-
-      // 4. Instant browser speech fallback (guarantees voice output without dead air)
+      // 5. Instant browser speech fallback (guarantees voice output without dead air)
       void browserSpeak(text, onEnded);
     },
     [
       browserSpeak,
+      playAudioBlob,
       playServerTTS,
       playVoiceboxDirect,
       voiceEngine,
-      voiceboxOnline,
+      voiceProfile,
+      voiceboxProfileId,
     ],
   );
 

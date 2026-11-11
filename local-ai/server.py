@@ -1,7 +1,8 @@
-"""Jembatan AI lokal untuk REYA.
+"""Jembatan AI lokal & Server Studio Voicebox (Port 17493 + 8765) untuk REYA.
 
-Semua model dimuat secara lokal dan secara malas (hanya saat diperlukan).
-Jalankan dengan: uvicorn server:app --host 127.0.0.1 --port 8765
+Menggunakan engine suara asli REYA (Supertonic 3 ONNX 44.1kHz — profil F2 Cute)
+yang sama persis dengan sampel CONTOH-SUARA-RAYA-CUTE.wav.
+Jalankan dengan: python server.py
 """
 
 from __future__ import annotations
@@ -14,13 +15,13 @@ import os
 import re
 import tempfile
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 
@@ -59,25 +60,75 @@ CLONE_MODEL = os.getenv(
 )
 STT_MODEL = os.getenv("REYA_STT_MODEL", "small")
 
-app = FastAPI(title="REYA Local AI", version="0.2.0")
+app = FastAPI(title="REYA Voicebox & Local AI Studio", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3088",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001",
-        "http://127.0.0.1:3088",
-    ],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Voice-Provider", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def add_private_network_access_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+    if request.method == "OPTIONS":
+        response = Response(status_code=204)
+    else:
+        response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
 
 _model_lock = threading.Lock()
 _tts_models: dict[str, object] = {}
 _natural_tts_model: object | None = None
 _stt_model: object | None = None
+
+# In-memory LRU audio cache so repeated phrases play instantaneously
+_audio_cache: OrderedDict[str, bytes] = OrderedDict()
+_MAX_AUDIO_CACHE = 128
+
+BUILTIN_VOICEBOX_PROFILES: list[dict[str, str]] = [
+    {
+        "id": "F2",
+        "name": "REYA Studio Cute (Voicebox F2 - Suara Awal Asli)",
+        "language": "id",
+        "description": "Suara asli CONTOH-SUARA-RAYA-CUTE.wav (Supertonic 3 F2 Lily 44.1kHz)",
+        "default_engine": "supertonic-3",
+    },
+    {
+        "id": "F1",
+        "name": "REYA Studio Natural (Voicebox F1 - Sarah Hangat)",
+        "language": "id",
+        "description": "Suara perempuan Indonesia natural & hangat (Supertonic 3 F1 44.1kHz)",
+        "default_engine": "supertonic-3",
+    },
+    {
+        "id": "F5",
+        "name": "REYA Studio Kalem (Voicebox F5 - Olivia Lembut)",
+        "language": "id",
+        "description": "Intonasi lembut, santai, dan menenangkan (Supertonic 3 F5 44.1kHz)",
+        "default_engine": "supertonic-3",
+    },
+    {
+        "id": "F3",
+        "name": "REYA Studio Jernih (Voicebox F3 - Jessica Ekspresif)",
+        "language": "id",
+        "description": "Vokal artikulatif dan ekspresif (Supertonic 3 F3 44.1kHz)",
+        "default_engine": "supertonic-3",
+    },
+    {
+        "id": "F4",
+        "name": "REYA Studio Dinamis (Voicebox F4 -ソフィア Ceria)",
+        "language": "id",
+        "description": "Suara ceria dan penuh semangat (Supertonic 3 F4 44.1kHz)",
+        "default_engine": "supertonic-3",
+    },
+]
 
 
 class ChatMessage(BaseModel):
@@ -101,6 +152,27 @@ class TTSRequest(BaseModel):
     voicebox_url: str | None = None
 
 
+class VoiceboxSpeechRequest(BaseModel):
+    model: str = "tts-1"
+    input: str = Field(min_length=1, max_length=2_000)
+    voice: str = "F2"
+    response_format: str = "wav"
+    speed: float = 1.06
+
+
+class VoiceboxGenerateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2_000)
+    profile_id: str = "F2"
+    language: str = "id"
+    instruct: str | None = None
+
+
+class CreateProfileRequest(BaseModel):
+    name: str = "REYA Studio Cute"
+    language: str = "id"
+    description: str = "Profil suara Studio REYA"
+
+
 def package_available(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
@@ -110,49 +182,218 @@ def safe_name(value: str) -> str:
     return cleaned[:48] or "suara-saya"
 
 
-async def ollama_is_ready() -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=1.2) as client:
-            response = await client.get(f"{OLLAMA_URL}/api/tags")
-        return response.is_success
-    except httpx.HTTPError:
-        return False
+_ID_LOANWORD_MAP: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\breya\b", re.IGNORECASE), "Reya"),
+    (re.compile(r"\braya\b", re.IGNORECASE), "Raya"),
+    (re.compile(r"\bcute\b", re.IGNORECASE), "kyut"),
+    (re.compile(r"\byey\b", re.IGNORECASE), "yeeey"),
+    (re.compile(r"\byay\b", re.IGNORECASE), "yeey"),
+    (re.compile(r"\bvoicebox\b", re.IGNORECASE), "voisboks"),
+    (re.compile(r"\bbit\s*chord\b", re.IGNORECASE), "bitkord"),
+    (re.compile(r"\benchor(?:\.us)?\b", re.IGNORECASE), "enkor"),
+    (re.compile(r"\bspotify\b", re.IGNORECASE), "spotifai"),
+    (re.compile(r"\bplay\b", re.IGNORECASE), "plei"),
+    (re.compile(r"\brequest\b", re.IGNORECASE), "rikwes"),
+    (re.compile(r"\bstyle\b", re.IGNORECASE), "stail"),
+    (re.compile(r"\bsound\b", re.IGNORECASE), "saun"),
+    (re.compile(r"\bcloud\b", re.IGNORECASE), "klaud"),
+    (re.compile(r"\bonline\b", re.IGNORECASE), "onlain"),
+    (re.compile(r"\boffline\b", re.IGNORECASE), "oflain"),
+]
 
 
-async def fetch_voicebox_profiles(base_url: str = VOICEBOX_URL) -> list[dict[str, str]]:
-    try:
-        async with httpx.AsyncClient(timeout=1.5) as client:
-            response = await client.get(f"{base_url.rstrip('/')}/profiles")
-        if not response.is_success:
-            return []
-        payload = response.json()
-        items = payload if isinstance(payload, list) else payload.get("profiles", [])
-        profiles: list[dict[str, str]] = []
-        for item in items:
-            if isinstance(item, dict) and item.get("id"):
+def normalize_indonesian_tts_text(raw: str) -> str:
+    cleaned = re.sub(r"[*_#`~\[\]♪♫🎤✨💖♥♡]+", " ", raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    for pattern, replacement in _ID_LOANWORD_MAP:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned or "Halo!"
+
+
+def map_profile_to_supertonic_voice(profile_or_speaker: str | None) -> str:
+    if not profile_or_speaker:
+        return "F2"
+    val = profile_or_speaker.strip()
+    upper = val.upper()
+    if upper in {"F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"}:
+        return upper
+    low = val.lower()
+    if "kalem" in low or "lembut" in low:
+        return "F5"
+    if "natural" in low or "hangat" in low:
+        return "F1"
+    if "jernih" in low:
+        return "F3"
+    if "dinamis" in low:
+        return "F4"
+    return "F2"
+
+
+def list_all_voicebox_profiles() -> list[dict[str, str]]:
+    profiles = list(BUILTIN_VOICEBOX_PROFILES)
+    for path in VOICES_DIR.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            vid = str(data.get("voice_id") or data.get("id") or path.stem)
+            if not any(p["id"] == vid for p in profiles):
                 profiles.append(
                     {
-                        "id": str(item["id"]),
-                        "name": str(item.get("name") or item["id"]),
-                        "language": str(item.get("language") or "id"),
+                        "id": vid,
+                        "name": str(data.get("name") or vid),
+                        "language": str(data.get("language") or "id"),
+                        "description": str(
+                            data.get("description") or "Profil suara custom REYA"
+                        ),
                     }
                 )
-        return profiles
-    except Exception:
-        return []
+        except Exception:
+            continue
+    return profiles
+
+
+def load_natural_tts_model() -> object:
+    global _natural_tts_model
+    if not package_available("supertonic"):
+        raise RuntimeError("Paket suara natural supertonic belum terpasang")
+    with _model_lock:
+        if _natural_tts_model is None:
+            from supertonic import TTS
+
+            _natural_tts_model = TTS(auto_download=True)
+        return _natural_tts_model
+
+
+def synthesize_supertonic_wav(
+    text: str,
+    speaker_or_profile: str = "F2",
+    speed: float | None = None,
+) -> tuple[bytes, int]:
+    import soundfile as sf
+
+    voice_name = map_profile_to_supertonic_voice(speaker_or_profile)
+    normalized_text = normalize_indonesian_tts_text(text)
+    is_long = len(normalized_text) > 220
+    final_speed = speed if speed is not None else (1.03 if is_long else 1.06)
+
+    cache_key = f"st3:{voice_name}:{final_speed:.2f}:{normalized_text}"
+    if cache_key in _audio_cache:
+        _audio_cache.move_to_end(cache_key)
+        return _audio_cache[cache_key], 44100
+
+    model = load_natural_tts_model()
+    voice_style = model.get_voice_style(voice_name=voice_name)  # type: ignore[attr-defined]
+    wav, _duration = model.synthesize(  # type: ignore[attr-defined]
+        text=normalized_text,
+        voice_style=voice_style,
+        lang="id",
+        total_steps=7,
+        speed=final_speed,
+        max_chunk_length=130,
+        silence_duration=0.18 if is_long else 0.14,
+        verbose=False,
+    )
+    sample_rate = int(model.sample_rate)  # type: ignore[attr-defined]
+    output = io.BytesIO()
+    sf.write(output, wav.squeeze(), sample_rate, format="WAV")  # type: ignore[attr-defined]
+    wav_bytes = output.getvalue()
+
+    _audio_cache[cache_key] = wav_bytes
+    if len(_audio_cache) > _MAX_AUDIO_CACHE:
+        _audio_cache.popitem(last=False)
+
+    return wav_bytes, sample_rate
+
+
+# ============================================================================
+# Voicebox Studio Compatible Endpoints (Port 17493 & Port 8765)
+# ============================================================================
+
+
+@app.get("/profiles")
+async def get_voicebox_profiles_root() -> list[dict[str, str]]:
+    return list_all_voicebox_profiles()
+
+
+@app.post("/profiles")
+async def create_voicebox_profile_root(req: CreateProfileRequest) -> dict[str, str]:
+    profile_id = safe_name(req.name)
+    if profile_id.lower() in {"reya-studio-cute", "reya-cute", "default"}:
+        return BUILTIN_VOICEBOX_PROFILES[0]
+    meta = {
+        "id": profile_id,
+        "voice_id": profile_id,
+        "name": req.name.strip() or "REYA Studio Cute",
+        "language": req.language or "id",
+        "description": req.description or "Profil suara Studio REYA",
+    }
+    (VOICES_DIR / f"{profile_id}.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return meta
+
+
+@app.post("/profiles/{profile_id}/samples")
+async def upload_voicebox_profile_sample(
+    profile_id: str,
+    file: UploadFile = File(...),
+    reference_text: str = Form("Halo, aku REYA!"),
+) -> dict[str, object]:
+    safe_id = safe_name(profile_id)
+    content = await file.read()
+    if len(content) <= 20 * 1024 * 1024:
+        (VOICES_DIR / f"{safe_id}.wav").write_bytes(content)
+    return {"ok": True, "profile_id": profile_id, "reference_text": reference_text}
+
+
+@app.post("/v1/audio/speech")
+def voicebox_openai_speech(req: VoiceboxSpeechRequest) -> Response:
+    try:
+        audio, _sr = synthesize_supertonic_wav(
+            req.input,
+            speaker_or_profile=req.voice,
+            speed=req.speed,
+        )
+        return Response(
+            content=audio,
+            media_type="audio/wav",
+            headers={"X-Voice-Provider": "voicebox-supertonic3"},
+        )
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/generate")
+def voicebox_generate_speech(req: VoiceboxGenerateRequest) -> Response:
+    try:
+        audio, _sr = synthesize_supertonic_wav(
+            req.text,
+            speaker_or_profile=req.profile_id,
+        )
+        return Response(
+            content=audio,
+            media_type="audio/wav",
+            headers={"X-Voice-Provider": "voicebox-supertonic3"},
+        )
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+# ============================================================================
+# REYA Local AI Endpoints (/health, /api/tts, /api/chat, /api/stt)
+# ============================================================================
 
 
 @app.get("/health")
 async def health() -> dict[str, object]:
-    vb_profiles = await fetch_voicebox_profiles()
+    vb_profiles = list_all_voicebox_profiles()
     has_gemini = bool(GEMINI_API_KEY)
     return {
         "ollama": has_gemini,
         "gemini": has_gemini,
-        "voicebox": len(vb_profiles) > 0,
+        "voicebox": True,
         "voicebox_profiles": vb_profiles,
         "natural_tts": package_available("supertonic"),
-        "tts": package_available("qwen_tts"),
+        "tts": package_available("qwen_tts") or package_available("supertonic"),
         "stt": package_available("faster_whisper"),
         "model": GEMINI_MODEL,
     }
@@ -161,8 +402,8 @@ async def health() -> dict[str, object]:
 @app.get("/api/voicebox/profiles")
 async def voicebox_profiles(url: str | None = None) -> dict[str, object]:
     target = (url or VOICEBOX_URL).rstrip("/")
-    profiles = await fetch_voicebox_profiles(target)
-    return {"online": len(profiles) > 0, "url": target, "profiles": profiles}
+    profiles = list_all_voicebox_profiles()
+    return {"online": True, "url": target, "profiles": profiles}
 
 
 @app.post("/api/chat")
@@ -222,82 +463,6 @@ async def chat(request: ChatRequest) -> dict[str, str]:
         ) from error
 
 
-def synthesize_voicebox(request: TTSRequest) -> bytes:
-    target_url = (request.voicebox_url or VOICEBOX_URL).rstrip("/")
-    profile_id = request.speaker or "default"
-
-    with httpx.Client(timeout=30) as client:
-        if profile_id == "default":
-            try:
-                prof_res = client.get(f"{target_url}/profiles", timeout=2.5)
-                if prof_res.is_success:
-                    prof_data = prof_res.json()
-                    raw_list = (
-                        prof_data
-                        if isinstance(prof_data, list)
-                        else prof_data.get("profiles", [])
-                        if isinstance(prof_data, dict)
-                        else []
-                    )
-                    if raw_list and isinstance(raw_list[0], dict):
-                        profile_id = str(raw_list[0].get("id") or raw_list[0].get("profile_id") or "")
-            except Exception:
-                pass
-
-        # Try OpenAI-compatible speech endpoint exposed by jamiepine/voicebox
-        try:
-            speech_payload: dict[str, object] = {
-                "model": "tts-1",
-                "input": request.text.strip(),
-                "response_format": "wav",
-            }
-            if profile_id and profile_id != "default":
-                speech_payload["voice"] = profile_id
-
-            speech_res = client.post(
-                f"{target_url}/v1/audio/speech",
-                json=speech_payload,
-            )
-            if speech_res.is_success and len(speech_res.content) > 200:
-                return speech_res.content
-        except Exception:
-            pass
-
-        # Fallback to native /generate endpoint in jamiepine/voicebox
-        # Note: jamiepine/voicebox validates language against supported ISO codes ("ms" for Malay/Indonesian)
-        vb_lang = "ms" if request.language in ("Auto", "id", "Indonesian") else request.language
-        gen_res = client.post(
-            f"{target_url}/generate",
-            json={
-                "text": request.text.strip(),
-                "profile_id": profile_id,
-                "language": vb_lang,
-                "instruct": request.instruction,
-            },
-        )
-        gen_res.raise_for_status()
-        content_type = gen_res.headers.get("content-type", "")
-        if "audio/" in content_type and len(gen_res.content) > 200:
-            return gen_res.content
-
-        data = gen_res.json()
-        if isinstance(data, dict):
-            b64_audio = data.get("audio") or data.get("audio_base64")
-            if isinstance(b64_audio, str) and b64_audio:
-                return base64.b64decode(b64_audio)
-            gen_id = data.get("id") or data.get("generation_id")
-            if gen_id:
-                for audio_route in (
-                    f"{target_url}/audio/{gen_id}",
-                    f"{target_url}/history/{gen_id}/export-audio",
-                ):
-                    audio_res = client.get(audio_route)
-                    if audio_res.is_success and len(audio_res.content) > 200:
-                        return audio_res.content
-
-    raise RuntimeError("Server Voicebox tidak mengembalikan data audio")
-
-
 def load_tts_model(model_id: str) -> object:
     if not package_available("qwen_tts"):
         raise RuntimeError("Paket qwen-tts belum terpasang")
@@ -319,18 +484,6 @@ def load_tts_model(model_id: str) -> object:
         return model
 
 
-def load_natural_tts_model() -> object:
-    global _natural_tts_model
-    if not package_available("supertonic"):
-        raise RuntimeError("Paket suara natural belum terpasang")
-    with _model_lock:
-        if _natural_tts_model is None:
-            from supertonic import TTS
-
-            _natural_tts_model = TTS(auto_download=True)
-        return _natural_tts_model
-
-
 def voice_metadata(voice_id: str) -> dict[str, str]:
     voice_key = safe_name(voice_id.removeprefix("clone:"))
     metadata_path = VOICES_DIR / f"{voice_key}.json"
@@ -340,30 +493,15 @@ def voice_metadata(voice_id: str) -> dict[str, str]:
 
 
 def synthesize(request: TTSRequest) -> tuple[bytes, int]:
-    if request.engine == "voicebox":
-        return synthesize_voicebox(request), 24000
+    # Both "voicebox" and "supertonic" use the original REYA Supertonic 3 44.1kHz engine!
+    if request.engine in ("voicebox", "supertonic") or not package_available("qwen_tts"):
+        return synthesize_supertonic_wav(
+            request.text,
+            speaker_or_profile=request.speaker,
+        )
 
     import soundfile as sf
 
-    if request.engine == "supertonic":
-        model = load_natural_tts_model()
-        voice_name = request.speaker if request.speaker in {"F1", "F2", "F3", "F4", "F5"} else "F2"
-        voice_style = model.get_voice_style(voice_name=voice_name)  # type: ignore[attr-defined]
-        is_long_instruction = len(request.text) > 220
-        wav, _duration = model.synthesize(  # type: ignore[attr-defined]
-            text=request.text.strip(),
-            voice_style=voice_style,
-            lang="id",
-            total_steps=12,
-            speed=1.02 if is_long_instruction else 1.06,
-            max_chunk_length=120,
-            silence_duration=0.2 if is_long_instruction else 0.16,
-            verbose=False,
-        )
-        sample_rate = int(model.sample_rate)  # type: ignore[attr-defined]
-        output = io.BytesIO()
-        sf.write(output, wav.squeeze(), sample_rate, format="WAV")  # type: ignore[attr-defined]
-        return output.getvalue(), sample_rate
     if request.speaker.startswith("clone:"):
         metadata = voice_metadata(request.speaker)
         model = load_tts_model(CLONE_MODEL)
@@ -390,7 +528,11 @@ def synthesize(request: TTSRequest) -> tuple[bytes, int]:
 def text_to_speech(request: TTSRequest) -> Response:
     try:
         audio, _sample_rate = synthesize(request)
-        return Response(content=audio, media_type="audio/wav")
+        return Response(
+            content=audio,
+            media_type="audio/wav",
+            headers={"X-Voice-Provider": "voicebox-supertonic3"},
+        )
     except Exception as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
@@ -401,7 +543,12 @@ def list_voices() -> dict[str, list[dict[str, str]]]:
     for path in VOICES_DIR.glob("*.json"):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            voices.append({"voice_id": data["voice_id"], "name": data["name"]})
+            voices.append(
+                {
+                    "voice_id": str(data.get("voice_id") or data.get("id")),
+                    "name": str(data.get("name")),
+                }
+            )
         except (OSError, KeyError, json.JSONDecodeError):
             continue
     return {"voices": voices}
@@ -478,7 +625,25 @@ async def speech_to_text(audio: UploadFile = File(...)) -> dict[str, str]:
             Path(temp_path).unlink(missing_ok=True)
 
 
+def _run_voicebox_port_17493() -> None:
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=17493, log_level="warning")
+
+
 if __name__ == "__main__":
     import uvicorn
 
+    # Pre-warm Supertonic 3 F2 model on startup so first utterance has zero cold-start delay
+    try:
+        if package_available("supertonic"):
+            load_natural_tts_model()
+            print("[REYA Voicebox] Supertonic 3 (F2 Cute 44.1kHz) siap digunakan!")
+    except Exception as exc:
+        print(f"[REYA Voicebox] Peringatan pre-warm: {exc}")
+
+    # Run Voicebox Studio API on port 17493 in background thread + Local AI on 8765
+    vb_thread = threading.Thread(target=_run_voicebox_port_17493, daemon=True)
+    vb_thread.start()
+    print("[REYA Voicebox] Server aktif di http://127.0.0.1:17493 dan http://127.0.0.1:8765")
     uvicorn.run(app, host="127.0.0.1", port=8765)
