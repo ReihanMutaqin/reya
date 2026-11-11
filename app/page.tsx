@@ -2125,7 +2125,6 @@ export default function Home() {
   const [speaking, setSpeaking] = useState(false);
   const [listening, setListening] = useState(false);
   const [voiceChatMode, setVoiceChatMode] = useState(false);
-  const [activeBrainLabel, setActiveBrainLabel] = useState("gemini-flash-latest");
 
   const [voiceboxUrl, setVoiceboxUrl] = useState(DEFAULT_VOICEBOX_URL);
   const [voiceboxOnline, setVoiceboxOnline] = useState(true);
@@ -3611,7 +3610,7 @@ export default function Home() {
 
         const queryToUse = cleanedQuery || enchorQuery || "Bohemian Rhapsody";
         setEnchorQuery(queryToUse);
-        answer = `Yey! Aku carikan lagu "${queryToUse}" langsung dari katalog BitChord dan aku nyanyikan buat kamu sekarang ya! 🎤♫`;
+        answer = `Yey! Aku carikan lagu "${queryToUse}" dan aku nyanyikan buat kamu sekarang ya! 🎤♫`;
         const assistantMessage: Message = { role: "assistant", content: answer };
         setMessages((current) => [...current, assistantMessage]);
         setThinking(false);
@@ -3685,7 +3684,6 @@ export default function Home() {
           const candidate = cleanResponse(data.message ?? "");
           if (candidate) {
             answer = candidate;
-            if (data.model) setActiveBrainLabel(data.model);
             if (data.song) {
               const assistantMessage: Message = { role: "assistant", content: answer };
               setMessages((current) => [...current, assistantMessage]);
@@ -3756,7 +3754,6 @@ export default function Home() {
               );
               if (candidate) {
                 answer = candidate;
-                setActiveBrainLabel(modelCandidate);
                 break;
               }
             }
@@ -4195,28 +4192,6 @@ export default function Home() {
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [cameraOn, startCamera, startMusic]);
 
-  const activeVoiceLabel = useMemo(() => {
-    if (voiceEngine === "voicebox") {
-      if (voiceboxOnline) {
-        const found = voiceboxProfiles.find((p) => p.id === voiceboxProfileId);
-        return found
-          ? `Voicebox · ${found.name}`
-          : `Voicebox · ${voiceboxProfileId}`;
-      }
-      return "Argon Cloud · Aoede (Ceria)";
-    }
-    if (voiceEngine === "supertonic") return `Natural Indo · ${voiceProfile}`;
-    if (voiceEngine === "qwen")
-      return `Qwen · ${voiceProfile.replace("clone:", "")}`;
-    return "Browser Speech";
-  }, [
-    voiceEngine,
-    voiceProfile,
-    voiceboxOnline,
-    voiceboxProfileId,
-    voiceboxProfiles,
-  ]);
-
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -4227,20 +4202,6 @@ export default function Home() {
             <small>Robot AI Lokal &amp; Synth</small>
           </span>
         </a>
-
-        <div className="telemetry-strip" role="status" aria-live="polite">
-          <div className="telemetry-item">
-            <span className="status-led online" />
-            <span className="mono">API: {activeBrainLabel}</span>
-          </div>
-          <span className="telemetry-divider" aria-hidden="true" />
-          <div className="telemetry-item">
-            <span className="status-led online" />
-            <span className="mono">
-              VOICE: VOICEBOX ONLINE (NEURAL ID)
-            </span>
-          </div>
-        </div>
 
         <div className="topbar-actions">
           <button
@@ -4287,9 +4248,9 @@ export default function Home() {
           <div className="module-index-bar">
             <span className="module-id">
               <span className="screw-dot" />
-              MOD-01 // DIALOG &amp; VOICEBOX UNIT
+              MOD-01 // OBROLAN &amp; MUSIK REYA
             </span>
-            <span className="module-id">GEMINI-ARGON READY</span>
+            <span className="module-id">AKTIF</span>
           </div>
 
           <div className="robot-deck">
@@ -4322,20 +4283,10 @@ export default function Home() {
               <div className="robot-headline">
                 <h1 id="mod01-heading">Halo, aku REYA.</h1>
                 <p>
-                  Konsol robot AI berbahasa Indonesia dengan otak Gemini Flash,
-                  sintesis suara Voicebox, dan instrumen musik dua tangan.
+                  Sahabat robot AI berbahasa Indonesia yang siap menemanimu
+                  ngobrol santai, bernyanyi, dan bermain musik dengan gerakan
+                  tangan.
                 </p>
-              </div>
-
-              <div className="spec-readout-grid">
-                <div className="spec-cell">
-                  <small>MODEL OTAK</small>
-                  <strong className="mono">{activeBrainLabel}</strong>
-                </div>
-                <div className="spec-cell">
-                  <small>MESIN SUARA</small>
-                  <strong className="mono">{activeVoiceLabel}</strong>
-                </div>
               </div>
 
               <div className="mood-selector-row">
@@ -4399,7 +4350,7 @@ export default function Home() {
                 <div className="message-row assistant">
                   <span className="message-tag">R1</span>
                   <p className="message-bubble mono">
-                    Memproses respons lewat {activeBrainLabel}...
+                    REYA sedang berpikir...
                   </p>
                 </div>
               )}
@@ -4407,8 +4358,8 @@ export default function Home() {
 
             <div className="prompt-strip">
               {[
-                "Nyanyikan lagu Bohemian Rhapsody dari BitChord",
-                "Nyanyi lagu Wildflower dari BitChord",
+                "Nyanyikan lagu Bohemian Rhapsody",
+                "Nyanyi lagu Wildflower",
                 "Nyanyikan lagu Ibu Kita Kartini",
                 "Bagaimana cara main musik pakai tangan?",
               ].map((suggestion) => (
@@ -4473,9 +4424,9 @@ export default function Home() {
           <div className="module-index-bar">
             <span className="module-id">
               <span className="screw-dot" />
-              MOD-02 // OPTICAL HAND SENSOR
+              MOD-02 // SENSOR GERAKAN TANGAN
             </span>
-            <span className="module-id">MEDIAPIPE 2-HAND</span>
+            <span className="module-id">KAMERA</span>
           </div>
 
           <div className="camera-header">
@@ -4593,10 +4544,10 @@ export default function Home() {
           <div className="module-index-bar">
             <span className="module-id">
               <span className="screw-dot" />
-              MOD-03 // POLYPHONIC GESTURE SYNTHESIZER
+              MOD-03 // INSTRUMEN MUSIK TANGAN
             </span>
             <span className="module-id">
-              {musicPlaying ? "AUDIO ENGINE: ACTIVE" : "AUDIO ENGINE: STANDBY"}
+              {musicPlaying ? "MUSIK AKTIF" : "SIAP MAIN"}
             </span>
           </div>
 
@@ -4914,15 +4865,15 @@ export default function Home() {
                     </button>
                   </div>
 
-                  {/* STUDIO NYANYI & KARAOKE BITCHORD (SPOTIFY-GRADE SEARCH & TTML LYRICS) */}
+                  {/* STUDIO NYANYI & KARAOKE */}
                   <div className="enchor-stage-box">
                     <div className="enchor-stage-header">
                       <div className="enchor-stage-title">
                         <span className="enchor-mic-badge">🎤</span>
                         <div>
-                          <strong>Panggung Musik &amp; Karaoke BitChord</strong>
+                          <strong>Panggung Musik &amp; Karaoke</strong>
                           <small className="mono" style={{ display: "block", fontSize: "10px", color: "var(--ink-muted)" }}>
-                            Pencarian Rapi ala Spotify · Lirik Suku Kata TTML BitChord
+                            Cari lagu favoritmu dan bernyanyi bersama REYA
                           </small>
                         </div>
                       </div>
@@ -4952,7 +4903,7 @@ export default function Home() {
                         className="field-input"
                         value={enchorQuery}
                         onChange={(e) => setEnchorQuery(e.target.value)}
-                        placeholder="Cari judul lagu atau nama penyanyi ala Spotify..."
+                        placeholder="Cari judul lagu atau nama penyanyi..."
                         style={{ flex: 1, minHeight: "38px", fontSize: "12px" }}
                       />
                       <button
@@ -5024,8 +4975,8 @@ export default function Home() {
                               }}
                             >
                               {enchorSelected.artist}
-                              {enchorSelected.charter
-                                ? ` · Sumber: ${enchorSelected.charter}`
+                              {enchorSelected.album
+                                ? ` · ${enchorSelected.album}`
                                 : ""}
                             </span>
                             <div style={{ display: "flex", gap: "6px", marginTop: "6px", flexWrap: "wrap" }}>
@@ -5081,40 +5032,13 @@ export default function Home() {
                       <div className="bitchord-catalog-container">
                         <div className="bitchord-catalog-header">
                           <span className="mono" style={{ fontSize: "10.5px", fontWeight: 700, color: "var(--ink-muted)" }}>
-                            ALL-API BITCHORD ({enchorResults.length} LAGU DITEMUKAN)
-                          </span>
-                          <span className="bitchord-source-pills">
-                            <span className="bitchord-pill pill-spotify">YT Music</span>
-                            <span className="bitchord-pill pill-apple">Saavn 320k</span>
-                            <span className="bitchord-pill pill-enchor">Apple</span>
-                            <span className="bitchord-pill pill-audius">Audius</span>
+                            DAFTAR LAGU ({enchorResults.length} DITEMUKAN)
                           </span>
                         </div>
 
                         <div className="bitchord-catalog-list">
                           {enchorResults.slice(0, 20).map((item) => {
                             const isSelected = enchorSelected?.md5 === item.md5;
-                            const sourceLabel =
-                              item.source === "jiosaavn"
-                                ? "Saavn 320k"
-                                : item.source === "ytmusic"
-                                  ? "YT Music"
-                                  : item.source === "itunes"
-                                    ? "Apple"
-                                    : item.source === "audius"
-                                      ? "Audius"
-                                      : item.source === "lrclib"
-                                        ? "LRC Lib"
-                                        : "Spotify";
-
-                            const sourceBadgeClass =
-                              item.source === "jiosaavn"
-                                ? "badge-enchor"
-                                : item.source === "itunes"
-                                  ? "badge-apple"
-                                  : item.source === "audius"
-                                    ? "badge-audius"
-                                    : "badge-spotify";
 
                             return (
                               <div
@@ -5163,14 +5087,6 @@ export default function Home() {
                                 </div>
 
                                 <div className="bitchord-track-meta">
-                                  <span className={`bitchord-badge ${sourceBadgeClass}`}>
-                                    {sourceLabel}
-                                  </span>
-                                  {item.hasLyrics && (
-                                    <span className="bitchord-badge badge-lyric">
-                                      LIRIK
-                                    </span>
-                                  )}
                                   <span className="bitchord-play-btn">
                                     {isSelected && (singingMode || enchorAudioPlaying)
                                       ? "▶ MAIN"
