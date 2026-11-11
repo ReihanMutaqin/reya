@@ -31,10 +31,10 @@ test("server-renders the REYA application", async () => {
   const html = await response.text();
   assert.match(html, /<html[^>]*lang=["']id["']/i);
   assert.match(html, /<title>REYA[^<]*Robot AI Lokal Indonesia<\/title>/i);
-  assert.match(html, /ROBOT AI LOKAL/i);
+  assert.match(html, /REYA \/\/ COMPANION/i);
   assert.match(html, /Studio Suara/i);
-  assert.match(html, /Pemetaan Gerakan Tangan/i);
-  assert.match(html, /Ringkasan Pemetaan/i);
+  assert.match(html, /Panggung Musik/i);
+  assert.match(html, /Obrolan Teman Kerja/i);
   assert.doesNotMatch(html, /Your site is taking shape/i);
 });
 

@@ -1500,6 +1500,7 @@ function RobotCRTUnit({
   singingLyric = "",
   singingMouthOpen = false,
   singingSongTitle = "",
+  spokenText = "",
   lastActivity = 0,
   onPoke,
   onSingClick,
@@ -1513,6 +1514,7 @@ function RobotCRTUnit({
   singingLyric?: string;
   singingMouthOpen?: boolean;
   singingSongTitle?: string;
+  spokenText?: string;
   lastActivity?: number;
   onPoke?: (kind?: RobotInteractionType) => void;
   onSingClick?: () => void;
@@ -1722,21 +1724,21 @@ function RobotCRTUnit({
   const showNotes = idleState === "hum" || isDancing || speaking || singingActive;
   const showSparkles = reaction === "snack" || reaction === "poke" || singingActive;
 
-  let statusLabel = "STBY // REYA SIAP";
-  let thoughtBubble = "";
+  let statusLabel = "STBY // TEMAN KERJA SIAP";
+  let thoughtBubble = spokenText || "Semangat kerjanya ya! Aku temenin di sini ♥";
 
   if (listening) {
     statusLabel = "REC // MENDENGARKAN";
     thoughtBubble = "Aku dengar kamu...";
   } else if (thinking) {
-    statusLabel = "PROC // GEMINI FLASH";
+    statusLabel = "PROC // BERPIKIR";
     thoughtBubble = "Hmm, mikir bentar...";
   } else if (singingActive) {
-    statusLabel = "SING // KONSER KARAOKE ENCHOR 🎤";
-    thoughtBubble = singingLyric || "La la la~ ♫";
+    statusLabel = "SING // KONSER KARAOKE 🎤";
+    thoughtBubble = singingLyric || "♪ Musik sedang mengalun... ♫";
   } else if (speaking) {
     statusLabel = "OUT // SUARA CERIA";
-    thoughtBubble = "Ngobrol bareng ♪";
+    thoughtBubble = spokenText || "Ngobrol bareng yuk! ♪";
   } else if (reaction === "headpat") {
     statusLabel = "LOVE // SENANG DIELUS ♥";
     thoughtBubble = "Hehe nyaman dielus~ ♥";
@@ -1757,7 +1759,7 @@ function RobotCRTUnit({
     thoughtBubble = "Cilukba! Ayo main! (*^^*)";
   } else if (musicActive) {
     statusLabel = "JAM // IKUT IRAMA MUSIK ♫";
-    thoughtBubble = "Merdu banget nadanya ♪";
+    thoughtBubble = singingLyric || "Merdu banget nadanya ♪";
   } else if (idleState === "sleep") {
     statusLabel = "ZZZ // TIDUR NYENYAK...";
     thoughtBubble =
@@ -1800,11 +1802,11 @@ function RobotCRTUnit({
         isDancing ? "is-dancing" : ""
       } ${reaction ? `reaction-${reaction}` : `idle-${idleState}`}`}
     >
-      {/* Floating Fluffy Cloud Bubble for Karaoke Lyrics & Cute Thoughts */}
+      {/* Floating Fluffy Cloud Bubble for Speech, Karaoke Lyrics & Cute Thoughts */}
       {thoughtBubble && (
         <div
           className={`robot-cloud-bubble is-${idleState} ${
-            singingActive ? "is-singing-cloud" : ""
+            singingActive || speaking ? "is-singing-cloud" : ""
           } ${reaction ? `is-react-${reaction}` : ""}`}
           aria-live="polite"
         >
@@ -1814,7 +1816,7 @@ function RobotCRTUnit({
           <span className="cloud-lobe lobe-mid" aria-hidden="true" />
           <span className="cloud-lobe lobe-right" aria-hidden="true" />
 
-          {singingActive ? (
+          {singingActive || speaking ? (
             <div className="cloud-singing-stage">
               <div className="cloud-singing-header">
                 <span className="cloud-eq-bars" aria-hidden="true">
@@ -1824,15 +1826,17 @@ function RobotCRTUnit({
                   <i />
                 </span>
                 <span className="cloud-song-tag">
-                  {singingSongTitle || "PANGGUNG KARAOKE REYA"}
+                  {singingActive
+                    ? singingSongTitle || "PANGGUNG KARAOKE REYA"
+                    : "SUARA REYA"}
                 </span>
                 <span className="cloud-note-badge" aria-hidden="true">
-                  ♪ ♫
+                  {singingActive ? "♪ ♫" : "💬"}
                 </span>
               </div>
               <div key={thoughtBubble} className="cloud-lyric-text">
                 <span className="cloud-mic-icon" aria-hidden="true">
-                  🎤
+                  {singingActive ? "🎤" : "🗣️"}
                 </span>{" "}
                 <span>{thoughtBubble}</span>
               </div>
@@ -2183,6 +2187,7 @@ export default function Home() {
   const [songSearchInput, setSongSearchInput] = useState("");
   const songTimersRef = useRef<number[]>([]);
   const [showMatrixView, setShowMatrixView] = useState(false);
+  const [showInstrumentDeck] = useState(false);
 
   // Enchor.us Karaoke & Cute Singing State
   const [enchorQuery, setEnchorQuery] = useState("Bohemian Rhapsody");
@@ -2226,7 +2231,15 @@ export default function Home() {
   const [singingLyric, setSingingLyric] = useState("");
   const [singingMouthOpen, setSingingMouthOpen] = useState(false);
   const [enchorAudioPlaying, setEnchorAudioPlaying] = useState(false);
+  const [audioPaused, setAudioPaused] = useState(false);
+  const [audioCurrentSec, setAudioCurrentSec] = useState(0);
+  const [audioDurationSec, setAudioDurationSec] = useState(0);
+  const [activeSpeechText, setActiveSpeechText] = useState(
+    "Halo! Aku REYA, teman kerjamu yang selalu siap menemani di paling atas layar ♥",
+  );
   const enchorAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioSyncTimerRef = useRef<number | null>(null);
+  const speechClearTimerRef = useRef<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -2459,17 +2472,63 @@ export default function Home() {
   const stopSong = useCallback(() => {
     songTimersRef.current.forEach((t) => window.clearTimeout(t));
     songTimersRef.current = [];
+    if (audioSyncTimerRef.current) {
+      window.clearInterval(audioSyncTimerRef.current);
+      audioSyncTimerRef.current = null;
+    }
     if (enchorAudioRef.current) {
       enchorAudioRef.current.pause();
       enchorAudioRef.current.currentTime = 0;
     }
     setEnchorAudioPlaying(false);
+    setAudioPaused(false);
+    setAudioCurrentSec(0);
     setSingingMode(false);
     setSingingLyric("");
     setSingingMouthOpen(false);
     setPlayingSong(false);
     setActiveSong(null);
   }, []);
+
+  const togglePauseSong = useCallback(() => {
+    const audioEl = enchorAudioRef.current;
+    if (!audioEl || !audioEl.src) return;
+    if (audioEl.paused) {
+      void audioEl.play().then(() => {
+        setAudioPaused(false);
+        setEnchorAudioPlaying(true);
+      });
+    } else {
+      audioEl.pause();
+      setAudioPaused(true);
+      setSingingMouthOpen(false);
+    }
+  }, []);
+
+  const seekSong = useCallback((nextSec: number) => {
+    const audioEl = enchorAudioRef.current;
+    if (!audioEl || !Number.isFinite(nextSec)) return;
+    audioEl.currentTime = Math.max(0, nextSec);
+    setAudioCurrentSec(audioEl.currentTime);
+  }, []);
+
+  const openFloatingCompanion = useCallback(() => {
+    const width = 415;
+    const height = 680;
+    const left = Math.max(20, window.screen.availWidth - width - 24);
+    const top = Math.max(20, window.screen.availHeight - height - 48);
+    const popup = window.open(
+      "/?floating=1",
+      "ReyaFloatingCompanion",
+      `popup=yes,width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`,
+    );
+    if (popup) {
+      popup.focus();
+      showToast("Jendela Floating REYA dibuka! Untuk paling atas di semua aplikasi, jalankan REYA-Companion.exe.");
+    } else {
+      showToast("Izinkan pop-up di browser atau unduh REYA-Companion.exe untuk mode Always on Top!");
+    }
+  }, [showToast]);
 
   const releaseAllSustainedVoices = useCallback((fast = false) => {
     sustainedVoicesRef.current.melody?.release(fast);
@@ -2711,30 +2770,105 @@ export default function Home() {
       // Stop previous song timers
       songTimersRef.current.forEach((t) => window.clearTimeout(t));
       songTimersRef.current = [];
+      if (audioSyncTimerRef.current) {
+        window.clearInterval(audioSyncTimerRef.current);
+        audioSyncTimerRef.current = null;
+      }
 
       const shouldSing = Boolean(options?.sing);
       const muteSynth = Boolean(options?.muteSynth);
       setSingingMode(shouldSing);
       setActiveSong(song);
       setPlayingSong(true);
+      setAudioPaused(false);
       showToast(
         shouldSing
-          ? `🎤 REYA menyanyikan: ${song.title} ♪`
+          ? `🎤 REYA menyanyikan full lagu: ${song.title} ♪`
           : `Memainkan lagu: ${song.title} ♪`,
       );
 
-      if (options?.lyrics && options.lyrics.length > 0) {
-        setSingingLyric(options.lyrics[0].text);
+      const lyricsList = options?.lyrics ?? [];
+      if (lyricsList.length > 0) {
+        setSingingLyric(lyricsList[0].text);
         setSingingMouthOpen(false);
+      }
 
-        options.lyrics.forEach((line) => {
-          // 1. Schedule lyric display for the whole line
+      // If playing real full-length online audio stream, sync lyrics & mouth directly to <audio>.currentTime!
+      // Never use setTimeout endTimer so the song is guaranteed to play 100% until the very last second.
+      if (muteSynth) {
+        audioSyncTimerRef.current = window.setInterval(() => {
+          const audioEl = enchorAudioRef.current;
+          if (!audioEl) return;
+
+          setAudioCurrentSec(audioEl.currentTime || 0);
+          if (Number.isFinite(audioEl.duration) && audioEl.duration > 0) {
+            setAudioDurationSec(audioEl.duration);
+          }
+
+          if (audioEl.paused) {
+            setSingingMouthOpen(false);
+            return;
+          }
+
+          const currentMs = audioEl.currentTime * 1000;
+          if (lyricsList.length > 0) {
+            let activeIdx = -1;
+            for (let i = 0; i < lyricsList.length; i++) {
+              if (lyricsList[i].timeMs <= currentMs + 140) {
+                activeIdx = i;
+              } else {
+                break;
+              }
+            }
+
+            if (activeIdx >= 0) {
+              const activeLine = lyricsList[activeIdx];
+              const nextLine = lyricsList[activeIdx + 1];
+              const lineEndMs =
+                activeLine.endMs ??
+                (nextLine
+                  ? Math.min(nextLine.timeMs - 80, activeLine.timeMs + 5500)
+                  : activeLine.timeMs + 5500);
+
+              if (currentMs <= lineEndMs + 1800) {
+                setSingingLyric(activeLine.text);
+              } else if (!nextLine) {
+                setSingingLyric(`🎵 Instrumental Outro · ${song.title} ♪`);
+              }
+
+              if (currentMs >= activeLine.timeMs && currentMs <= lineEndMs) {
+                if (activeLine.syllables && activeLine.syllables.length > 0) {
+                  const inSyl = activeLine.syllables.some(
+                    (s) => currentMs >= s.beginMs && currentMs <= s.endMs,
+                  );
+                  setSingingMouthOpen(
+                    inSyl || Math.floor(currentMs / 180) % 2 === 0,
+                  );
+                } else {
+                  setSingingMouthOpen(Math.floor(currentMs / 175) % 2 === 0);
+                }
+              } else {
+                setSingingMouthOpen(false);
+              }
+            } else {
+              setSingingLyric(`🎵 Intro · ${song.title} ♪`);
+              setSingingMouthOpen(false);
+            }
+          } else {
+            setSingingLyric(`🎤 ${song.title} ♪`);
+            setSingingMouthOpen(Math.floor(currentMs / 190) % 2 === 0);
+          }
+        }, 60);
+        return;
+      }
+
+      if (lyricsList.length > 0) {
+        lyricsList.forEach((line) => {
           const lTimer = window.setTimeout(() => {
             setSingingLyric(line.text);
           }, Math.max(0, line.timeMs));
           songTimersRef.current.push(lTimer);
 
-          // 2. Schedule precise syllable-by-syllable mouth opening (BitChord accuracy)
           if (line.syllables && line.syllables.length > 0) {
             line.syllables.forEach((syl) => {
               const openTimer = window.setTimeout(() => {
@@ -2746,7 +2880,6 @@ export default function Home() {
               songTimersRef.current.push(openTimer, closeTimer);
             });
           } else {
-            // Line-level fallback: mouth moves during active lyric line, closes during instrumental gap
             const openTimer = window.setTimeout(() => {
               if (musicPlayingRef.current) setSingingMouthOpen(true);
             }, Math.max(0, line.timeMs));
@@ -2767,29 +2900,27 @@ export default function Home() {
           const pitchFreq = item.freq ?? note.freq;
 
           if (musicPlayingRef.current) {
-            if (!muteSynth) {
-              playNote(
+            playNote(
+              audio.context,
+              audio.master,
+              pitchFreq,
+              musicModeRef.current,
+              0.55,
+              shouldSing ? -0.15 : 0,
+              false,
+            );
+            if (shouldSing) {
+              playKawaiiVocalNote(
                 audio.context,
                 audio.master,
                 pitchFreq,
-                musicModeRef.current,
-                0.55,
-                shouldSing ? -0.15 : 0,
-                false,
+                item.dur ?? 0.38,
+                index,
+                0.15,
               );
-              if (shouldSing) {
-                playKawaiiVocalNote(
-                  audio.context,
-                  audio.master,
-                  pitchFreq,
-                  item.dur ?? 0.38,
-                  index,
-                  0.15,
-                );
-              }
             }
             setActiveScaleNoteId(note.id);
-            if (!options?.lyrics?.length && item.lyric) {
+            if (!lyricsList.length && item.lyric) {
               setSingingLyric(item.lyric);
             }
             setLastPlayedLabel(
@@ -2802,21 +2933,16 @@ export default function Home() {
 
       const lastNoteMs =
         song.notes.length > 0
-          ? song.notes[song.notes.length - 1].delay + 1600
+          ? song.notes[song.notes.length - 1].delay + 1800
           : 0;
       const lastLyricMs =
-        options?.lyrics && options.lyrics.length > 0
-          ? options.lyrics[options.lyrics.length - 1].timeMs + 4200
+        lyricsList.length > 0
+          ? (lyricsList[lyricsList.length - 1].endMs ??
+              lyricsList[lyricsList.length - 1].timeMs + 4200)
           : 0;
-      const totalSongDurationMs = Math.max(lastNoteMs, lastLyricMs, 4000);
+      const totalSongDurationMs = Math.max(lastNoteMs, lastLyricMs, 6000);
 
       const endTimer = window.setTimeout(() => {
-        if (enchorAudioRef.current) {
-          enchorAudioRef.current.loop = false;
-          enchorAudioRef.current.pause();
-          enchorAudioRef.current.currentTime = 0;
-        }
-        setEnchorAudioPlaying(false);
         setPlayingSong(false);
         setSingingMode(false);
         setSingingLyric("");
@@ -2849,6 +2975,7 @@ export default function Home() {
         }
         const data = (await res.json()) as {
           results?: typeof enchorResults;
+          song?: { songLengthMs?: number };
           selected?: {
             name: string;
             artist: string;
@@ -2896,6 +3023,12 @@ export default function Home() {
           lyrics: sel.lyrics ?? [],
         });
 
+        const estDurationSec = Math.round(
+          (data.song?.songLengthMs || 210000) / 1000,
+        );
+        setAudioCurrentSec(0);
+        setAudioDurationSec(estDurationSec);
+
         // Build playable Song with exact BitChord vocal/syllable pitches
         let currentDelay = 0;
         const cuteSyllables = ["La~", "Na~", "Mi~", "Lu~", "La~", "Du~"];
@@ -2933,20 +3066,33 @@ export default function Home() {
           if (!enchorAudioRef.current) {
             enchorAudioRef.current = new Audio();
           }
-          enchorAudioRef.current.loop = false;
-          enchorAudioRef.current.src = streamUrl;
-          enchorAudioRef.current.volume = 0.9;
-          enchorAudioRef.current.onended = () => {
+          const audioEl = enchorAudioRef.current;
+          audioEl.loop = false;
+          audioEl.preload = "auto";
+          audioEl.src = streamUrl;
+          audioEl.volume = 0.92;
+          audioEl.onloadedmetadata = () => {
+            if (Number.isFinite(audioEl.duration) && audioEl.duration > 0) {
+              setAudioDurationSec(audioEl.duration);
+            }
+          };
+          audioEl.onended = () => {
+            if (audioSyncTimerRef.current) {
+              window.clearInterval(audioSyncTimerRef.current);
+              audioSyncTimerRef.current = null;
+            }
             setEnchorAudioPlaying(false);
+            setAudioPaused(false);
             setPlayingSong(false);
             setSingingMode(false);
             setSingingLyric("");
             setSingingMouthOpen(false);
           };
-          void enchorAudioRef.current
+          void audioEl
             .play()
             .then(() => {
               setEnchorAudioPlaying(true);
+              setAudioPaused(false);
               playSong(enchorSong, {
                 sing: true,
                 muteSynth: true,
@@ -3301,6 +3447,12 @@ export default function Home() {
   const handleSpeechEnd = useCallback(() => {
     isSpeakingRef.current = false;
     setSpeaking(false);
+    if (speechClearTimerRef.current) {
+      window.clearTimeout(speechClearTimerRef.current);
+    }
+    speechClearTimerRef.current = window.setTimeout(() => {
+      setActiveSpeechText("Semangat kerjanya ya! Aku temenin di sini ♥");
+    }, 3200);
     if (voiceChatModeRef.current) {
       window.setTimeout(() => {
         if (voiceChatModeRef.current && !isSpeakingRef.current) {
@@ -3484,6 +3636,15 @@ export default function Home() {
 
   const speak = useCallback(
     async (text: string, onEnded?: () => void) => {
+      const cleanBubbleText = text.replace(/[*_#`~]/g, "").trim();
+      if (cleanBubbleText) {
+        if (speechClearTimerRef.current) {
+          window.clearTimeout(speechClearTimerRef.current);
+          speechClearTimerRef.current = null;
+        }
+        setActiveSpeechText(cleanBubbleText);
+      }
+
       // 1. Instant Web Speech Synthesis when browser engine is explicitly selected
       if (voiceEngine === "browser") {
         void browserSpeak(text, onEnded);
@@ -3573,44 +3734,26 @@ export default function Home() {
       const wantsSingOrEnchor =
         norm.includes("nyanyi") ||
         norm.includes("karaoke") ||
+        norm.includes("putar") ||
+        norm.includes("mainkan") ||
+        norm.includes("lagu") ||
         norm.includes("bitchord") ||
         norm.includes("enchor") ||
         norm.includes("encore");
 
-      // 0. If user asks REYA to sing or search BitChord
+      // 0. If user asks REYA to sing or play a song, always fetch the full-length online track!
       if (wantsSingOrEnchor) {
         const cleanedQuery = text
           .replace(
-            /\b(tolong|coba|bisa|ga|ngga|dong|ya|yuk|reya|nyanyi|nyanyikan|menyanyi|karaoke|lagu|dari|di|bitchord|enchor|encore)\b/gi,
+            /\b(tolong|coba|bisa|ga|ngga|dong|ya|yuk|reya|nyanyi|nyanyikan|menyanyi|karaoke|putar|putarkan|mainkan|lagu|dari|di|bitchord|enchor|encore)\b/gi,
             " ",
           )
           .replace(/\s+/g, " ")
           .trim();
 
-        const matchedLocal = cleanedQuery ? findSong(cleanedQuery) : null;
-        if (matchedLocal && !norm.includes("bitchord") && !norm.includes("enchor")) {
-          answer = `Asyik! Aku nyanyikan lagu ${matchedLocal.title} dengan suara vokalku sekarang ya! La la la~ 🎤♪`;
-          const assistantMessage: Message = {
-            role: "assistant",
-            content: answer,
-          };
-          setMessages((current) => [...current, assistantMessage]);
-          setThinking(false);
-          let started = false;
-          const trigger = () => {
-            if (!started) {
-              started = true;
-              playSong(matchedLocal, { sing: true });
-            }
-          };
-          void speak(answer, trigger);
-          window.setTimeout(trigger, 3800);
-          return;
-        }
-
         const queryToUse = cleanedQuery || enchorQuery || "Bohemian Rhapsody";
         setEnchorQuery(queryToUse);
-        answer = `Yey! Aku carikan lagu "${queryToUse}" dan aku nyanyikan buat kamu sekarang ya! 🎤♫`;
+        answer = `Yey! Aku carikan full lagu "${queryToUse}" dan aku nyanyikan sampai selesai buat nemenin kamu kerja ya! 🎤♫`;
         const assistantMessage: Message = { role: "assistant", content: answer };
         setMessages((current) => [...current, assistantMessage]);
         setThinking(false);
@@ -3626,10 +3769,11 @@ export default function Home() {
         return;
       }
 
-      // 1. Check if user asked for a known song in the rich catalog
+      // 1. Check if user asked for a known song title directly
       const matchedCatalogSong = findSong(norm);
       if (matchedCatalogSong) {
-        answer = `Tentu! Ini lagu ${matchedCatalogSong.title} yang indah, aku mainkan dan nyanyikan untukmu sekarang ya! ♪`;
+        setEnchorQuery(matchedCatalogSong.title);
+        answer = `Tentu! Aku putarkan full lagu ${matchedCatalogSong.title} sampai beres sambil bernyanyi untukmu sekarang ya! ♪`;
         const assistantMessage: Message = { role: "assistant", content: answer };
         setMessages((current) => [...current, assistantMessage]);
         setThinking(false);
@@ -3637,7 +3781,7 @@ export default function Home() {
         const triggerSong = () => {
           if (!started) {
             started = true;
-            playSong(matchedCatalogSong, { sing: true });
+            void searchAndSingEnchor(matchedCatalogSong.title);
           }
         };
         void speak(answer, triggerSong);
@@ -4192,18 +4336,43 @@ export default function Home() {
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [cameraOn, startCamera, startMusic]);
 
+  const formatTimeSec = (sec: number) => {
+    if (!Number.isFinite(sec) || sec < 0) return "0:00";
+    const total = Math.floor(sec);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+  };
+
   return (
-    <main className="app-shell">
+    <main className="app-shell companion-shell">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="REYA beranda konsol">
+        <a className="brand" href="#top" aria-label="REYA beranda teman kerja">
           <span className="brand-mark">R1</span>
           <span className="brand-text">
-            <b>REYA // UNIT-01</b>
-            <small>Robot AI Lokal &amp; Synth</small>
+            <b>REYA // COMPANION</b>
+            <small>Teman Kerja AI · Paling Atas</small>
           </span>
         </a>
 
         <div className="topbar-actions">
+          <button
+            type="button"
+            className="hw-button"
+            onClick={openFloatingCompanion}
+            title="Buka jendela floating ukuran ringkas di pojok layar"
+          >
+            <span>📌 Mode Floating</span>
+          </button>
+          <a
+            className="hw-button primary"
+            href="/REYA-Companion.exe"
+            download="REYA-Companion.exe"
+            style={{ textDecoration: "none" }}
+            title="Unduh aplikasi Windows REYA-Companion.exe (Selalu Paling Atas di semua aplikasi)"
+          >
+            <span>⬇ Download .EXE</span>
+          </a>
           <button
             type="button"
             className={`hw-button ${voiceChatMode ? "active-green" : ""}`}
@@ -4240,17 +4409,17 @@ export default function Home() {
       </header>
 
       <div
-        className={`console-grid ${cameraExpanded ? "camera-expanded" : ""}`}
+        className={`console-grid companion-only ${cameraExpanded ? "camera-expanded" : ""}`}
         id="top"
       >
-        {/* MOD-01: ROBOT ACOUSTIC UNIT & LIVE DIALOG */}
-        <section className="hw-module" aria-labelledby="mod01-heading">
+        {/* MOD-01: FLOATING COMPANION BOT, SPEECH/LYRIC BUBBLE, FULL MUSIC & LIVE CHAT */}
+        <section className="hw-module companion-main-card" aria-labelledby="mod01-heading">
           <div className="module-index-bar">
             <span className="module-id">
               <span className="screw-dot" />
-              MOD-01 // OBROLAN &amp; MUSIK REYA
+              REYA // TEMAN KERJA FLOATING
             </span>
-            <span className="module-id">AKTIF</span>
+            <span className="module-id">PALING ATAS · SIAP MENEMANI</span>
           </div>
 
           <div className="robot-deck">
@@ -4268,6 +4437,7 @@ export default function Home() {
                   ? `${enchorSelected.name} · ${enchorSelected.artist}`
                   : activeSong?.title ?? ""
               }
+              spokenText={activeSpeechText}
               lastActivity={lastActivity}
               onPoke={handleRobotPoke}
               onSingClick={() => {
@@ -4283,9 +4453,9 @@ export default function Home() {
               <div className="robot-headline">
                 <h1 id="mod01-heading">Halo, aku REYA.</h1>
                 <p>
-                  Sahabat robot AI berbahasa Indonesia yang siap menemanimu
-                  ngobrol santai, bernyanyi, dan bermain musik dengan gerakan
-                  tangan.
+                  Teman kerja AI yang lucu dan selalu siap menemanimu di paling
+                  atas semua aplikasi sambil mengobrol suara dan menyanyikan
+                  lagu kesukaanmu sampai selesai.
                 </p>
               </div>
 
@@ -4309,7 +4479,7 @@ export default function Home() {
                   className="hw-button"
                   onClick={() =>
                     void speak(
-                      "Halo! Aku REYA. Suaraku sekarang ceria dan natural, siap menemanimu ngobrol santai atau bermain musik!",
+                      "Halo! Aku REYA, teman kerjamu yang siap menemani di paling atas layar sambil mengobrol dan bernyanyi sampai lagunya beres!",
                     )
                   }
                 >
@@ -4317,12 +4487,331 @@ export default function Home() {
                   <span>Uji Suara</span>
                 </button>
               </div>
+
+              <div className="companion-exe-banner">
+                <button
+                  type="button"
+                  className="hw-button"
+                  onClick={openFloatingCompanion}
+                >
+                  <span>📌 Jendela Floating</span>
+                </button>
+                <a
+                  className="hw-button primary"
+                  href="/REYA-Companion.exe"
+                  download="REYA-Companion.exe"
+                  style={{ textDecoration: "none" }}
+                >
+                  <span>⬇ Unduh REYA-Companion.exe (Paling Atas)</span>
+                </a>
+              </div>
             </div>
+          </div>
+
+          {/* PANGGUNG MUSIK & KARAOKE FULL LAGU TANPA PUTUS */}
+          <div className="enchor-stage-box" style={{ marginTop: "16px" }}>
+            <div className="enchor-stage-header">
+              <div className="enchor-stage-title">
+                <span className="enchor-mic-badge">🎤</span>
+                <div>
+                  <strong>Panggung Musik &amp; Karaoke Full Lagu</strong>
+                  <small
+                    className="mono"
+                    style={{
+                      display: "block",
+                      fontSize: "10px",
+                      color: "var(--ink-muted)",
+                    }}
+                  >
+                    Putar lagu penuh sampai beres dengan bubble lirik langsung di atas kepala REYA
+                  </small>
+                </div>
+              </div>
+              {(singingMode || enchorAudioPlaying || playingSong) && (
+                <div style={{ display: "flex", gap: "6px" }}>
+                  {enchorAudioPlaying && (
+                    <button
+                      type="button"
+                      className="hw-button"
+                      style={{ minHeight: "32px", padding: "0 10px", fontSize: "11px" }}
+                      onClick={togglePauseSong}
+                    >
+                      <span>{audioPaused ? "▶ Lanjut" : "⏸ Jeda"}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="hw-button primary"
+                    style={{ minHeight: "32px", padding: "0 10px", fontSize: "11px" }}
+                    onClick={stopSong}
+                  >
+                    <span>⏹ Berhenti</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (enchorQuery.trim()) {
+                  void searchAndSingEnchor(enchorQuery.trim());
+                }
+              }}
+              style={{ display: "flex", gap: "6px", marginTop: "8px" }}
+            >
+              <input
+                type="text"
+                className="field-input"
+                value={enchorQuery}
+                onChange={(e) => setEnchorQuery(e.target.value)}
+                placeholder="Cari judul lagu atau nama penyanyi..."
+                style={{ flex: 1, minHeight: "38px", fontSize: "12px" }}
+              />
+              <button
+                type="submit"
+                className="hw-button primary"
+                disabled={enchorLoading}
+                style={{ minHeight: "38px", padding: "0 14px", whiteSpace: "nowrap" }}
+              >
+                <span>
+                  {enchorLoading ? "Mencari..." : "🎤 Cari & Nyanyi"}
+                </span>
+              </button>
+            </form>
+
+            <div className="enchor-quick-chips">
+              {[
+                "Wildflower",
+                "Komang",
+                "Laskar Pelangi",
+                "Hotel California",
+                "Bohemian Rhapsody",
+                "Hati-Hati di Jalan",
+                "Sial",
+              ].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  className="enchor-chip"
+                  onClick={() => {
+                    setEnchorQuery(preset);
+                    void searchAndSingEnchor(preset);
+                  }}
+                >
+                  ♪ {preset}
+                </button>
+              ))}
+            </div>
+
+            {enchorSelected && (
+              <div className="enchor-now-playing">
+                <div className="enchor-song-meta">
+                  {enchorSelected.albumArtUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={enchorSelected.albumArtUrl}
+                      alt={enchorSelected.name}
+                      className="enchor-album-art"
+                    />
+                  ) : (
+                    <div className="enchor-album-placeholder">🎤</div>
+                  )}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <strong
+                      style={{
+                        display: "block",
+                        fontSize: "13px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {enchorSelected.name}
+                    </strong>
+                    <span
+                      style={{
+                        display: "block",
+                        fontSize: "11px",
+                        color: "var(--ink-muted)",
+                      }}
+                    >
+                      {enchorSelected.artist}
+                      {enchorSelected.album
+                        ? ` · ${enchorSelected.album}`
+                        : ""}
+                    </span>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "6px",
+                        marginTop: "6px",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {(enchorSelected.audioUrl ||
+                        enchorSelected.vocalAudioUrl) && (
+                        <button
+                          type="button"
+                          className={`hw-button ${enchorAudioPlaying ? "primary active-green" : ""}`}
+                          style={{
+                            minHeight: "30px",
+                            padding: "0 10px",
+                            fontSize: "11px",
+                          }}
+                          onClick={() =>
+                            void searchAndSingEnchor(
+                              enchorSelected.name,
+                              enchorSelected.md5,
+                              true,
+                            )
+                          }
+                        >
+                          <span>🎧 Lagu Asli Penuh + Karaoke</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className={`hw-button ${singingMode && !enchorAudioPlaying ? "primary active-green" : ""}`}
+                        style={{
+                          minHeight: "30px",
+                          padding: "0 10px",
+                          fontSize: "11px",
+                        }}
+                        onClick={() =>
+                          void searchAndSingEnchor(
+                            enchorSelected.name,
+                            enchorSelected.md5,
+                            false,
+                          )
+                        }
+                      >
+                        <span>🎹 Vokal Synth REYA</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* FULL SONG PROGRESS BAR & DURATION READOUT */}
+                {enchorAudioPlaying && (
+                  <div className="song-progress-row">
+                    <span className="mono song-time-tag">
+                      {formatTimeSec(audioCurrentSec)}
+                    </span>
+                    <input
+                      type="range"
+                      className="song-progress-slider"
+                      min={0}
+                      max={Math.max(1, Math.round(audioDurationSec || 210))}
+                      value={Math.min(
+                        Math.round(audioCurrentSec),
+                        Math.max(1, Math.round(audioDurationSec || 210)),
+                      )}
+                      onChange={(e) => seekSong(Number(e.target.value))}
+                      aria-label="Posisi pemutaran lagu"
+                    />
+                    <span className="mono song-time-tag">
+                      {formatTimeSec(audioDurationSec)}
+                    </span>
+                  </div>
+                )}
+
+                <div className="enchor-lyric-ticker" aria-live="polite">
+                  <span className="mono" style={{ fontSize: "10px", opacity: 0.75 }}>
+                    BUBBLE LIRIK:
+                  </span>{" "}
+                  <strong>
+                    {singingLyric ||
+                      enchorSelected.lyrics[0]?.text ||
+                      "🎤 Siap bernyanyi bersama REYA sampai lagu selesai! ♪"}
+                  </strong>
+                </div>
+              </div>
+            )}
+
+            {enchorResults.length > 0 && (
+              <div className="bitchord-catalog-container">
+                <div className="bitchord-catalog-header">
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: "10.5px",
+                      fontWeight: 700,
+                      color: "var(--ink-muted)",
+                    }}
+                  >
+                    PILIH LAGU ({enchorResults.length} DITEMUKAN)
+                  </span>
+                </div>
+
+                <div className="bitchord-catalog-list">
+                  {enchorResults.slice(0, 20).map((item) => {
+                    const isSelected = enchorSelected?.md5 === item.md5;
+
+                    return (
+                      <div
+                        key={`${item.chartId}-${item.md5}`}
+                        className={`bitchord-track-item ${isSelected ? "active" : ""}`}
+                        onClick={() =>
+                          void searchAndSingEnchor(item.name, item.md5, true)
+                        }
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            void searchAndSingEnchor(item.name, item.md5, true);
+                          }
+                        }}
+                      >
+                        {item.albumArtUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={item.albumArtUrl}
+                            alt={item.name}
+                            className="bitchord-track-thumb"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="bitchord-track-thumb-placeholder">
+                            ♪
+                          </div>
+                        )}
+
+                        <div className="bitchord-track-info">
+                          <div className="bitchord-track-title">
+                            {isSelected ? "🎤 " : ""}
+                            {item.name}
+                          </div>
+                          <div className="bitchord-track-artist">
+                            <span>{item.artist}</span>
+                            {item.album && (
+                              <span className="bitchord-track-album">
+                                {" "}
+                                · {item.album}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="bitchord-track-meta">
+                          <span className="bitchord-play-btn">
+                            {isSelected && (singingMode || enchorAudioPlaying)
+                              ? "▶ MAIN"
+                              : "PUTAR"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="dialog-section">
             <div className="dialog-header">
-              <h2>Obrolan Langsung</h2>
+              <h2>Obrolan Teman Kerja</h2>
               <span className="module-id">
                 {speaking
                   ? "STATUS: MENGELUARKAN SUARA"
@@ -4330,7 +4819,7 @@ export default function Home() {
                     ? "STATUS: MEMPROSES JAWABAN"
                     : listening
                       ? "STATUS: MEREKAM MIKROFON"
-                      : "STATUS: SIAP MENERIMA PESAN"}
+                      : "STATUS: SIAP MENEMANI KERJA"}
               </span>
             </div>
 
@@ -4358,10 +4847,10 @@ export default function Home() {
 
             <div className="prompt-strip">
               {[
-                "Nyanyikan lagu Bohemian Rhapsody",
+                "Nyanyikan lagu Komang",
                 "Nyanyi lagu Wildflower",
-                "Nyanyikan lagu Ibu Kita Kartini",
-                "Bagaimana cara main musik pakai tangan?",
+                "Nyanyikan lagu Bohemian Rhapsody",
+                "Semangatin aku kerja dong!",
               ].map((suggestion) => (
                 <button
                   key={suggestion}
@@ -4404,7 +4893,7 @@ export default function Home() {
                 placeholder={
                   listening
                     ? "Mendengarkan suaramu..."
-                    : "Tulis pesan untuk REYA atau tekan tombol Bicara..."
+                    : "Ngobrol sama REYA atau minta putarkan lagu..."
                 }
                 aria-label="Pesan untuk REYA"
               />
@@ -4413,12 +4902,14 @@ export default function Home() {
                 type="submit"
                 disabled={!input.trim() || thinking}
               >
-                <span>Kirim Pesan</span>
+                <span>Kirim</span>
               </button>
             </form>
           </div>
         </section>
 
+        {showInstrumentDeck && (
+          <>
         {/* MOD-02: OPTICAL HAND-TRACKING SENSOR */}
         <aside className="hw-module" aria-labelledby="mod02-heading">
           <div className="module-index-bar">
@@ -5354,6 +5845,8 @@ export default function Home() {
             )}
           </div>
         </section>
+          </>
+        )}
       </div>
 
       {/* STUDIO SUARA & VOICEBOX CONFIGURATION MODAL */}
