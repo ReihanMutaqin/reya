@@ -52,8 +52,8 @@ namespace ReyaFloatingCompanion
 
         // Window & Layout sizing for cute compact Desktop Pet (Micro Scale)
         private double _petScale = 0.44;
-        private double _baseWindowHeight = 118;
-        private double _baseWindowWidth = 175;
+        private double _baseWindowHeight = 145;
+        private double _baseWindowWidth = 230;
         private ScaleTransform _robotLayoutScale;
 
         // UI Elements
@@ -250,8 +250,7 @@ namespace ReyaFloatingCompanion
             {
                 Background = null,
                 VerticalAlignment = VerticalAlignment.Bottom,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Width = Width
+                HorizontalAlignment = HorizontalAlignment.Center
             };
 
             _mainStack = new StackPanel
@@ -272,6 +271,7 @@ namespace ReyaFloatingCompanion
                 Padding = new Thickness(7, 3, 7, 4),
                 MaxWidth = 165,
                 MinWidth = 100,
+                Opacity = 0.75, // 75% opacity requested by user
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 0, 0, 3),
                 Cursor = Cursors.Hand,
@@ -281,7 +281,7 @@ namespace ReyaFloatingCompanion
                     Color = Colors.Black,
                     BlurRadius = 8,
                     ShadowDepth = 2,
-                    Opacity = 0.35
+                    Opacity = 0.25
                 }
             };
             _cloudBubble.MouseLeftButtonDown += (s, e) =>
@@ -331,10 +331,11 @@ namespace ReyaFloatingCompanion
             _robotLayoutScale = new ScaleTransform(_petScale, _petScale);
             _robotCanvas.LayoutTransform = _robotLayoutScale;
 
+            _robotCanvas.RenderTransformOrigin = new Point(0.5, 0.5);
             var robotTransformGroup = new TransformGroup();
-            _robotScaleTransform = new ScaleTransform(1, 1, 80, 85);
+            _robotScaleTransform = new ScaleTransform(1, 1);
             _robotBobTransform = new TranslateTransform(0, 0);
-            _robotTiltTransform = new RotateTransform(0, 80, 85);
+            _robotTiltTransform = new RotateTransform(0);
             robotTransformGroup.Children.Add(_robotScaleTransform);
             robotTransformGroup.Children.Add(_robotBobTransform);
             robotTransformGroup.Children.Add(_robotTiltTransform);
@@ -439,7 +440,8 @@ namespace ReyaFloatingCompanion
                 FontWeight = FontWeights.Bold,
                 Foreground = HexBrush("#5CE8A0"),
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                RenderTransformOrigin = new Point(0.5, 0.5)
             };
             var torso = new Border
             {
@@ -701,7 +703,8 @@ namespace ReyaFloatingCompanion
             {
                 Text = "🧋",
                 FontSize = 18,
-                Visibility = Visibility.Collapsed
+                Visibility = Visibility.Collapsed,
+                RenderTransformOrigin = new Point(0.5, 0.5)
             };
             Canvas.SetLeft(_propSticker, 124);
             Canvas.SetTop(_propSticker, 92);
@@ -1487,6 +1490,7 @@ namespace ReyaFloatingCompanion
         {
             _cloudHeaderText.Text = header;
             _cloudMainText.Text = text;
+            _cloudBubble.Opacity = 0.75;
             if (darkSingMode)
             {
                 _cloudBubble.Background = HexBrush("#18221E");
@@ -1678,8 +1682,8 @@ namespace ReyaFloatingCompanion
             _isBlinking = (blinkMod == 0 || blinkMod == 1);
 
             _robotScaleTransform.ScaleX = (_walkDirection > 0 ? 1.0 : -1.0);
-            _torsoBadgeText.RenderTransform = new ScaleTransform(_walkDirection > 0 ? 1.0 : -1.0, 1.0, 6, 6);
-            _propSticker.RenderTransform = new ScaleTransform(_walkDirection > 0 ? 1.0 : -1.0, 1.0, 10, 10);
+            _torsoBadgeText.RenderTransform = new ScaleTransform(_walkDirection > 0 ? 1.0 : -1.0, 1.0);
+            _propSticker.RenderTransform = new ScaleTransform(_walkDirection > 0 ? 1.0 : -1.0, 1.0);
 
             if (inReaction)
             {
@@ -2156,7 +2160,21 @@ namespace ReyaFloatingCompanion
                 }
                 if (songBytes == null || songBytes.Length < 1000)
                 {
-                    songBytes = await Http.GetByteArrayAsync(audioUrl);
+                    try
+                    {
+                        songBytes = await Http.GetByteArrayAsync(audioUrl);
+                    }
+                    catch
+                    {
+                        songBytes = null;
+                    }
+                }
+
+                if (songBytes == null || songBytes.Length == 0)
+                {
+                    _statusMiniText.Text = "Audio belum dapat diunduh";
+                    SetCloudBubble("✦ KONEKSI SIBUK", "Coba klik judul lagunya lagi ya ♪", false);
+                    return;
                 }
 
                 string ext = audioUrl.Contains(".mp3") ? ".mp3" : ".m4a";
