@@ -2167,6 +2167,7 @@ export default function Home() {
   const [showMatrixView, setShowMatrixView] = useState(false);
   const [showInstrumentDeck] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [petWalk, setPetWalk] = useState(true);
 
   // Enchor.us Karaoke & Cute Singing State
   const [enchorQuery, setEnchorQuery] = useState("Bohemian Rhapsody");
@@ -4380,7 +4381,7 @@ export default function Home() {
       </div>
 
       {/* CODEX-STYLE BOT-ONLY STAGE: ONLY THE BOT, CLOUD BUBBLE ABOVE, AND PILL BELOW */}
-      <div className="codex-pet-stage" id="top">
+      <div className={`codex-pet-stage ${petWalk ? "pet-walking" : ""}`} id="top">
         <RobotCRTUnit
           speaking={speaking}
           listening={listening}
@@ -4407,7 +4408,7 @@ export default function Home() {
           }}
         />
 
-        {/* CODEX-STYLE DARK CAPSULE PILL UNDER THE BOT: [ ♥ | ★ | 🧋 | 🕺 | 📝 | 🎙️ ] */}
+        {/* CODEX-STYLE DARK CAPSULE PILL UNDER THE BOT: [ ♥ | ★ | 🧋 | 🕺 | 🐾 | 📝 | 🎙️ ] */}
         <div className="codex-action-pill" role="toolbar" aria-label="Kontrol REYA">
           <button
             type="button"
@@ -4450,6 +4451,19 @@ export default function Home() {
             aria-label="Ajak REYA Nyanyi"
           >
             🕺
+          </button>
+          <button
+            type="button"
+            className={`codex-pill-btn ${petWalk ? "active" : ""}`}
+            onClick={() => setPetWalk((w) => !w)}
+            title={
+              petWalk
+                ? "Mode Jalan Pet di Taskbar: Aktif (Klik untuk Diam)"
+                : "Mode Jalan Pet di Taskbar: Diam (Klik untuk Jalan)"
+            }
+            aria-label="Mode Jalan Pet"
+          >
+            🐾
           </button>
 
           <span className="codex-pill-divider" aria-hidden="true" />

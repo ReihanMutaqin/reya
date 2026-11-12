@@ -3186,6 +3186,35 @@ button {
   position: relative;
   padding-top: 68px;
   user-select: none;
+  transition: transform 0.3s ease;
+}
+
+.codex-pet-stage.pet-walking {
+  animation: petWalkSway 3.6s ease-in-out infinite alternate;
+}
+
+.codex-pet-stage.pet-walking .chibi-foot.left-foot {
+  animation: petWalkLeftFoot 0.45s ease-in-out infinite alternate;
+}
+
+.codex-pet-stage.pet-walking .chibi-foot.right-foot {
+  animation: petWalkRightFoot 0.45s ease-in-out 0.22s infinite alternate;
+}
+
+@keyframes petWalkSway {
+  0% { transform: translateX(-40px); }
+  50% { transform: translateX(0px); }
+  100% { transform: translateX(40px); }
+}
+
+@keyframes petWalkLeftFoot {
+  0% { transform: translateY(0) rotate(-10deg); }
+  100% { transform: translateY(-5px) rotate(12deg); }
+}
+
+@keyframes petWalkRightFoot {
+  0% { transform: translateY(0) rotate(10deg); }
+  100% { transform: translateY(-5px) rotate(-12deg); }
 }
 
 /* Strip away the old rectangular card around the CRT so ONLY the mini robot silhouette exists */
