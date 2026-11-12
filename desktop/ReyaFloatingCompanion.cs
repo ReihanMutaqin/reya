@@ -50,10 +50,10 @@ namespace ReyaFloatingCompanion
         private const string BaseApiUrl = "https://reya-cyan.vercel.app";
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
 
-        // Window & Layout sizing for cute compact Desktop Pet
-        private bool _isPetSizeSmall = true;
-        private double _baseWindowHeight = 220;
-        private double _baseWindowWidth = 240;
+        // Window & Layout sizing for cute compact Desktop Pet (Micro Scale)
+        private double _petScale = 0.44;
+        private double _baseWindowHeight = 118;
+        private double _baseWindowWidth = 175;
         private ScaleTransform _robotLayoutScale;
 
         // UI Elements
@@ -93,7 +93,7 @@ namespace ReyaFloatingCompanion
         private TextBlock _floatingHearts;
         private TextBlock _propSticker;
 
-        // Codex-style Bottom Pill & Popover
+        // Codex-style Bottom Pill & Popover (Hidden by default, shown on click!)
         private Border _actionPill;
         private Button _walkToggleBtn;
         private Border[] _pillWaveBars = new Border[5];
@@ -105,6 +105,7 @@ namespace ReyaFloatingCompanion
         private Slider _songProgressSlider;
         private TextBlock _songTimeMini;
         private Button _pauseResumeBtn;
+        private int _pillAutoCloseTick = 0;
 
         // Audio & Sync State
         private MediaPlayer _musicPlayer = new MediaPlayer();
@@ -129,10 +130,10 @@ namespace ReyaFloatingCompanion
         private bool _petWalkEnabled = true;
         private bool _isWalking = true;
         private int _walkDirection = -1; // -1 = walk left (towards Start button), 1 = walk right (towards Clock)
-        private double _walkSpeed = 1.6;
+        private double _walkSpeed = 1.25;
         private int _walkPhaseTicks = 0;
-        private int _walkDurationTicks = 120;
-        private int _idleDurationTicks = 80;
+        private int _walkDurationTicks = 110;
+        private int _idleDurationTicks = 75;
         private double _walkStepCycle = 0;
 
         // Drag / Shake detection
@@ -150,7 +151,7 @@ namespace ReyaFloatingCompanion
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
             if (!Http.DefaultRequestHeaders.Contains("User-Agent"))
             {
-                Http.DefaultRequestHeaders.Add("User-Agent", "REYA-Desktop-Companion/3.5");
+                Http.DefaultRequestHeaders.Add("User-Agent", "REYA-Desktop-Companion/4.0");
             }
 
             Title = "REYA Companion";
@@ -163,7 +164,7 @@ namespace ReyaFloatingCompanion
             ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false;
 
-            // Place REYA directly on top of the taskbar!
+            // Snap feet directly on top of the taskbar
             SnapToTaskbarBottom();
 
             BuildVisualTree();
@@ -177,7 +178,7 @@ namespace ReyaFloatingCompanion
 
             Loaded += (s, e) =>
             {
-                TriggerReaction("wave", "✦ HALO TEMAN KERJA!", "Aku REYA, pet mungil yang nemenin kamu di atas taskbar ♪", false);
+                TriggerReaction("wave", "✦ HALO!", "Aku REYA! Klik badanku untuk buka tombol kontrol ya ♪", false);
             };
 
             SourceInitialized += (s, e) =>
@@ -214,8 +215,8 @@ namespace ReyaFloatingCompanion
 
                 bool overInteractive =
                     IsPointOverElement(_robotCanvas, pt) ||
-                    IsPointOverElement(_actionPill, pt) ||
                     IsPointOverElement(_cloudBubble, pt) ||
+                    (_actionPill.Visibility == Visibility.Visible && IsPointOverElement(_actionPill, pt)) ||
                     (_drawerPanel.Visibility == Visibility.Visible && IsPointOverElement(_drawerPanel, pt));
 
                 handled = true;
@@ -266,20 +267,20 @@ namespace ReyaFloatingCompanion
             {
                 Background = HexBrush("#F8F6F0"),
                 BorderBrush = HexBrush("#2A302D"),
-                BorderThickness = new Thickness(2.0),
-                CornerRadius = new CornerRadius(15),
-                Padding = new Thickness(10, 5, 10, 6),
-                MaxWidth = 220,
-                MinWidth = 130,
+                BorderThickness = new Thickness(1.8),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(7, 3, 7, 4),
+                MaxWidth = 165,
+                MinWidth = 100,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 4),
+                Margin = new Thickness(0, 0, 0, 3),
                 Cursor = Cursors.Hand,
                 ToolTip = "Klik bubble untuk ganti sapaan lucu REYA!",
                 Effect = new DropShadowEffect
                 {
                     Color = Colors.Black,
-                    BlurRadius = 10,
-                    ShadowDepth = 3,
+                    BlurRadius = 8,
+                    ShadowDepth = 2,
                     Opacity = 0.35
                 }
             };
@@ -291,9 +292,9 @@ namespace ReyaFloatingCompanion
             var cloudStack = new StackPanel { Orientation = Orientation.Vertical };
             _cloudHeaderText = new TextBlock
             {
-                Text = "✦ REYA TEMAN KERJA",
+                Text = "✦ REYA",
                 FontFamily = new FontFamily("Consolas"),
-                FontSize = 8.5,
+                FontSize = 7.5,
                 FontWeight = FontWeights.Bold,
                 Foreground = HexBrush("#0E623D"),
                 Margin = new Thickness(0, 0, 0, 1),
@@ -303,12 +304,12 @@ namespace ReyaFloatingCompanion
             {
                 Text = "Halo! Aku REYA siap nemenin kerja ♪",
                 FontFamily = new FontFamily("Segoe UI Semibold"),
-                FontSize = 11.0,
+                FontSize = 9.8,
                 FontWeight = FontWeights.Bold,
                 Foreground = HexBrush("#161817"),
                 TextWrapping = TextWrapping.Wrap,
                 TextAlignment = TextAlignment.Center,
-                MaxHeight = 44
+                MaxHeight = 36
             };
             cloudStack.Children.Add(_cloudHeaderText);
             cloudStack.Children.Add(_cloudMainText);
@@ -323,11 +324,11 @@ namespace ReyaFloatingCompanion
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Cursor = Cursors.Hand,
                 Background = Brushes.Transparent,
-                ToolTip = "REYA Pet: Klik = Interaksi | Geser = Pindah | Klik Kanan = Menu Pet"
+                ToolTip = "REYA Pet: Klik = Buka/Tutup Tombol | Geser = Pindah | Klik Kanan = Menu"
             };
 
-            // LayoutTransform scales the entire robot down to cute compact desktop pet size!
-            _robotLayoutScale = new ScaleTransform(_isPetSizeSmall ? 0.65 : 1.0, _isPetSizeSmall ? 0.65 : 1.0);
+            // LayoutTransform scales the entire robot down to cute micro pet size (~70x72px)!
+            _robotLayoutScale = new ScaleTransform(_petScale, _petScale);
             _robotCanvas.LayoutTransform = _robotLayoutScale;
 
             var robotTransformGroup = new TransformGroup();
@@ -347,13 +348,13 @@ namespace ReyaFloatingCompanion
             {
                 _moodIndex = (_moodIndex + 1) % 4;
                 if (_moodIndex == 0)
-                    TriggerReaction("love", "♥ MOOD: MANJA", "Ehehe seneng banget ditemenin kamu kerja~ ♥", true);
+                    TriggerReaction("love", "♥ MANJA", "Ehehe seneng banget ditemenin kamu kerja~ ♥", true);
                 else if (_moodIndex == 1)
-                    TriggerReaction("star", "🔥 MOOD: SEMANGAT", "Gas terus kerjanya! Kamu pasti bisa beresin semuanya! 🔥", true);
+                    TriggerReaction("star", "🔥 SEMANGAT", "Gas terus kerjanya! Kamu pasti bisa! 🔥", true);
                 else if (_moodIndex == 2)
-                    TriggerReaction("boba", "🧋 MOOD: SANTAI BOBA", "Slurp~ minum boba dulu biar pikiran adem dan fokus ♪", true);
+                    TriggerReaction("boba", "🧋 BOBA", "Slurp~ minum boba dulu biar adem ♪", true);
                 else
-                    TriggerReaction("sleepy", "💤 MOOD: NGANTUK LUCU", "Huaah~ kalau capek istirahat mata 5 menit ya... Zzz", false);
+                    TriggerReaction("sleepy", "💤 NGANTUK", "Huaah~ istirahat mata sebentar ya... Zzz", false);
             };
 
             // Curved Top Antenna
@@ -378,7 +379,7 @@ namespace ReyaFloatingCompanion
                 Fill = HexBrush("#5CE8A0"),
                 Stroke = HexBrush("#161A18"),
                 StrokeThickness = 1.8,
-                Effect = new DropShadowEffect { Color = Color.FromRgb(92, 232, 160), BlurRadius = 10, ShadowDepth = 0 }
+                Effect = new DropShadowEffect { Color = Color.FromRgb(92, 232, 160), BlurRadius = 8, ShadowDepth = 0 }
             };
             Canvas.SetLeft(_antennaBulb, 2);
             Canvas.SetTop(_antennaBulb, 12);
@@ -454,7 +455,7 @@ namespace ReyaFloatingCompanion
             Canvas.SetTop(torso, 104);
             _robotCanvas.Children.Add(torso);
 
-            // Sitting / Walking Feet
+            // Sitting / Walking Feet (These touch the taskbar directly!)
             var leftFoot = new Border
             {
                 Width = 22,
@@ -525,8 +526,8 @@ namespace ReyaFloatingCompanion
                 Effect = new DropShadowEffect
                 {
                     Color = Colors.Black,
-                    BlurRadius = 14,
-                    ShadowDepth = 4,
+                    BlurRadius = 12,
+                    ShadowDepth = 3,
                     Opacity = 0.45
                 }
             };
@@ -708,28 +709,29 @@ namespace ReyaFloatingCompanion
 
             _mainStack.Children.Add(_robotCanvas);
 
-            // 3. CODEX-STYLE DARK FLOATING CAPSULE PILL ([ ♥ | ★ | 🧋 | 🐾 | 📝 | 🎙️ ])
+            // 3. CODEX-STYLE DARK FLOATING CAPSULE PILL
+            // *** HIDDEN BY DEFAULT (User: "bawah nya hide aja, kalau di klik bot nya baru muncul") ***
             _actionPill = new Border
             {
                 Background = HexBrush("#181A1C"),
                 BorderBrush = HexBrush("#383E42"),
                 BorderThickness = new Thickness(1.4),
-                CornerRadius = new CornerRadius(16),
-                Padding = new Thickness(6, 3, 6, 3),
+                CornerRadius = new CornerRadius(14),
+                Padding = new Thickness(5, 2, 5, 2),
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, -1, 0, 0),
+                Margin = new Thickness(0, 3, 0, 0),
+                Visibility = Visibility.Collapsed, // HIDDEN BY DEFAULT!
                 Effect = new DropShadowEffect
                 {
                     Color = Colors.Black,
                     BlurRadius = 10,
                     ShadowDepth = 3,
-                    Opacity = 0.45
+                    Opacity = 0.5
                 }
             };
 
             var pillRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
 
-            // Cute Pet Interaction Buttons
             var patBtn = CreatePillButton("♥", "Elus kepala REYA (Senang & Manja)");
             patBtn.Click += (s, e) =>
             {
@@ -784,23 +786,23 @@ namespace ReyaFloatingCompanion
 
             pillRow.Children.Add(CreatePillDivider());
 
-            // Right Pill Button: Audio Waveform Icon (klik = bicara sapaan lucu / jeda-lanjut musik)
+            // Right Pill Button: Audio Waveform Icon
             var waveStack = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 VerticalAlignment = VerticalAlignment.Center,
-                Height = 18
+                Height = 16
             };
-            double[] defaultHeights = { 5, 10, 14, 10, 5 };
+            double[] defaultHeights = { 4, 8, 12, 8, 4 };
             for (int i = 0; i < 5; i++)
             {
                 var wBar = new Border
                 {
-                    Width = 2.2,
+                    Width = 2.0,
                     Height = defaultHeights[i],
-                    CornerRadius = new CornerRadius(1.1),
+                    CornerRadius = new CornerRadius(1.0),
                     Background = Brushes.White,
-                    Margin = new Thickness(1.0, 0, 1.0, 0),
+                    Margin = new Thickness(0.9, 0, 0.9, 0),
                     VerticalAlignment = VerticalAlignment.Center
                 };
                 _pillWaveBars[i] = wBar;
@@ -812,7 +814,7 @@ namespace ReyaFloatingCompanion
                 Content = waveStack,
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
-                Padding = new Thickness(5, 3, 5, 3),
+                Padding = new Thickness(4, 2, 4, 2),
                 Cursor = Cursors.Hand,
                 ToolTip = "Klik untuk sapaan suara / Jeda-Lanjut lagu (Klik kanan untuk Stop lagu)"
             };
@@ -825,10 +827,10 @@ namespace ReyaFloatingCompanion
                 else
                 {
                     string[] voiceLines = {
-                        "Halo sahabat kerjaku! Semangat terus ya, aku temenin di atas taskbar sambil jalan-jalan!",
-                        "Jangan lupa minum air putih dan istirahatkan bahumu sebentar ya!",
-                        "Kalau mau sambil dengerin musik full, klik ikon tulis lalu pilih lagu kesukaanmu ya!",
-                        "Hehe seneng banget bisa jalan-jalan nemenin kamu kerja hari ini!"
+                        "Halo! Semangat terus kerjanya ya, aku nemenin kamu di atas taskbar!",
+                        "Jangan lupa minum air putih dan istirahatkan mata sejenak ya!",
+                        "Kalau mau dengerin lagu, klik ikon tulis lalu ketik lagu kesukaanmu!",
+                        "Hehe seneng banget nemenin kamu kerja hari ini!"
                     };
                     string picked = voiceLines[_tickCount % voiceLines.Length];
                     TriggerReaction("love", "🗣️ SUARA REYA", picked, false);
@@ -841,6 +843,15 @@ namespace ReyaFloatingCompanion
             };
             pillRow.Children.Add(waveBtn);
 
+            // Mini Close button for the pill
+            var closePillBtn = CreatePillButton("✕", "Tutup tombol kontrol (bisa dibuka lagi kapan saja dengan klik REYA)");
+            closePillBtn.Foreground = HexBrush("#7E8682");
+            closePillBtn.Click += (s, e) =>
+            {
+                TogglePillVisibility(false);
+            };
+            pillRow.Children.Add(closePillBtn);
+
             _actionPill.Child = pillRow;
             _mainStack.Children.Add(_actionPill);
 
@@ -851,16 +862,16 @@ namespace ReyaFloatingCompanion
                 BorderBrush = HexBrush("#383E42"),
                 BorderThickness = new Thickness(1.4),
                 CornerRadius = new CornerRadius(14),
-                Padding = new Thickness(10, 8, 10, 8),
-                Width = 230,
-                Margin = new Thickness(0, 6, 0, 0),
+                Padding = new Thickness(8, 6, 8, 6),
+                Width = 210,
+                Margin = new Thickness(0, 5, 0, 0),
                 Visibility = Visibility.Collapsed,
                 Effect = new DropShadowEffect
                 {
                     Color = Colors.Black,
-                    BlurRadius = 14,
+                    BlurRadius = 12,
                     ShadowDepth = 4,
-                    Opacity = 0.5
+                    Opacity = 0.55
                 }
             };
 
@@ -879,8 +890,8 @@ namespace ReyaFloatingCompanion
                 CaretBrush = HexBrush("#5CE8A0"),
                 BorderBrush = HexBrush("#454C50"),
                 BorderThickness = new Thickness(1),
-                Padding = new Thickness(6, 4, 6, 4),
-                FontSize = 11,
+                Padding = new Thickness(5, 3, 5, 3),
+                FontSize = 10.5,
                 Text = ""
             };
             _promptInput.KeyDown += async (s, e) =>
@@ -900,10 +911,10 @@ namespace ReyaFloatingCompanion
                 Foreground = HexBrush("#5CE8A0"),
                 BorderBrush = HexBrush("#5CE8A0"),
                 BorderThickness = new Thickness(1),
-                Padding = new Thickness(6, 4, 6, 4),
-                Margin = new Thickness(4, 0, 0, 0),
+                Padding = new Thickness(5, 3, 5, 3),
+                Margin = new Thickness(3, 0, 0, 0),
                 FontWeight = FontWeights.Bold,
-                FontSize = 11,
+                FontSize = 10,
                 Cursor = Cursors.Hand,
                 ToolTip = "Cari & Nyanyikan Lagu Full"
             };
@@ -923,10 +934,10 @@ namespace ReyaFloatingCompanion
                 Background = HexBrush("#B83312"),
                 Foreground = Brushes.White,
                 BorderThickness = new Thickness(0),
-                Padding = new Thickness(6, 4, 6, 4),
-                Margin = new Thickness(4, 0, 0, 0),
+                Padding = new Thickness(5, 3, 5, 3),
+                Margin = new Thickness(3, 0, 0, 0),
                 FontWeight = FontWeights.Bold,
-                FontSize = 11,
+                FontSize = 10,
                 Cursor = Cursors.Hand,
                 ToolTip = "Kirim pesan obrolan"
             };
@@ -939,7 +950,7 @@ namespace ReyaFloatingCompanion
             drawerStack.Children.Add(inputGrid);
 
             // Quick Song Chips
-            var chipsWrap = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+            var chipsWrap = new WrapPanel { Margin = new Thickness(0, 5, 0, 0) };
             string[] quickSongs = { "Komang", "Wildflower", "Laskar Pelangi", "Hotel California", "Bohemian Rhapsody", "Sial" };
             foreach (var songName in quickSongs)
             {
@@ -950,9 +961,9 @@ namespace ReyaFloatingCompanion
                     Foreground = HexBrush("#E8F47A"),
                     BorderBrush = HexBrush("#3E464A"),
                     BorderThickness = new Thickness(1),
-                    Padding = new Thickness(5, 2, 5, 2),
-                    Margin = new Thickness(0, 0, 4, 4),
-                    FontSize = 9.5,
+                    Padding = new Thickness(4, 2, 4, 2),
+                    Margin = new Thickness(0, 0, 3, 3),
+                    FontSize = 9.0,
                     FontWeight = FontWeights.SemiBold,
                     Cursor = Cursors.Hand
                 };
@@ -969,20 +980,20 @@ namespace ReyaFloatingCompanion
             _playerMiniRow = new StackPanel
             {
                 Orientation = Orientation.Vertical,
-                Margin = new Thickness(0, 4, 0, 0),
+                Margin = new Thickness(0, 3, 0, 0),
                 Visibility = Visibility.Collapsed
             };
             _songTitleMini = new TextBlock
             {
                 Text = "",
                 Foreground = HexBrush("#5CE8A0"),
-                FontSize = 10,
+                FontSize = 9.5,
                 FontWeight = FontWeights.Bold,
                 TextTrimming = TextTrimming.CharacterEllipsis
             };
             _playerMiniRow.Children.Add(_songTitleMini);
 
-            var progGrid = new Grid { Margin = new Thickness(0, 3, 0, 0) };
+            var progGrid = new Grid { Margin = new Thickness(0, 2, 0, 0) };
             progGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             progGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             progGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1013,9 +1024,9 @@ namespace ReyaFloatingCompanion
                 Text = "0:00 / 0:00",
                 Foreground = HexBrush("#A9B0AC"),
                 FontFamily = new FontFamily("Consolas"),
-                FontSize = 9,
+                FontSize = 8.5,
                 VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(4, 0, 4, 0)
+                Margin = new Thickness(3, 0, 3, 0)
             };
             Grid.SetColumn(_songTimeMini, 1);
             progGrid.Children.Add(_songTimeMini);
@@ -1026,9 +1037,9 @@ namespace ReyaFloatingCompanion
                 Background = HexBrush("#262B2E"),
                 Foreground = Brushes.White,
                 BorderThickness = new Thickness(0),
-                Padding = new Thickness(5, 1, 5, 1),
-                Margin = new Thickness(0, 0, 3, 0),
-                FontSize = 9,
+                Padding = new Thickness(4, 1, 4, 1),
+                Margin = new Thickness(0, 0, 2, 0),
+                FontSize = 8.5,
                 Cursor = Cursors.Hand
             };
             _pauseResumeBtn.Click += (s, e) => TogglePauseSong();
@@ -1041,8 +1052,8 @@ namespace ReyaFloatingCompanion
                 Background = HexBrush("#B83312"),
                 Foreground = Brushes.White,
                 BorderThickness = new Thickness(0),
-                Padding = new Thickness(5, 1, 5, 1),
-                FontSize = 9,
+                Padding = new Thickness(4, 1, 4, 1),
+                FontSize = 8.5,
                 Cursor = Cursors.Hand
             };
             stopMiniBtn.Click += (s, e) => StopSong();
@@ -1054,10 +1065,10 @@ namespace ReyaFloatingCompanion
 
             _statusMiniText = new TextBlock
             {
-                Text = "Klik lagu di atas untuk nyanyi full tanpa putus ♪",
+                Text = "Klik lagu di atas untuk karaoke full sampai beres ♪",
                 Foreground = HexBrush("#9AA29E"),
-                FontSize = 9,
-                Margin = new Thickness(0, 3, 0, 0),
+                FontSize = 8.5,
+                Margin = new Thickness(0, 2, 0, 0),
                 TextWrapping = TextWrapping.Wrap
             };
             drawerStack.Children.Add(_statusMiniText);
@@ -1069,21 +1080,46 @@ namespace ReyaFloatingCompanion
             Content = root;
         }
 
+        // Toggle bottom pill bar on clicking the bot
+        private void TogglePillVisibility(bool? forceShow = null)
+        {
+            var wa = SystemParameters.WorkArea;
+            bool shouldShow = forceShow.HasValue ? forceShow.Value : (_actionPill.Visibility != Visibility.Visible);
+
+            if (shouldShow)
+            {
+                _actionPill.Visibility = Visibility.Visible;
+                Height = _baseWindowHeight + 36;
+                Top = Math.Max(10, wa.Bottom - Height);
+                _pillAutoCloseTick = _tickCount + 360; // Auto-close in ~18s if untouched
+            }
+            else
+            {
+                _actionPill.Visibility = Visibility.Collapsed;
+                _drawerPanel.Visibility = Visibility.Collapsed;
+                Height = _baseWindowHeight;
+                Top = Math.Max(10, wa.Bottom - Height);
+                _pillAutoCloseTick = 0;
+            }
+        }
+
         private void ToggleDrawer()
         {
             var wa = SystemParameters.WorkArea;
             if (_drawerPanel.Visibility == Visibility.Visible)
             {
                 _drawerPanel.Visibility = Visibility.Collapsed;
-                Height = _baseWindowHeight;
+                Height = _baseWindowHeight + (_actionPill.Visibility == Visibility.Visible ? 36 : 0);
                 Top = Math.Max(10, wa.Bottom - Height);
             }
             else
             {
                 _drawerPanel.Visibility = Visibility.Visible;
-                Height = _baseWindowHeight + 195;
+                _actionPill.Visibility = Visibility.Visible;
+                Height = _baseWindowHeight + 36 + 180;
                 Top = Math.Max(10, wa.Bottom - Height);
                 _promptInput.Focus();
+                _pillAutoCloseTick = 0; // Don't auto-close while typing
             }
         }
 
@@ -1100,21 +1136,9 @@ namespace ReyaFloatingCompanion
             };
             cm.Items.Add(walkItem);
 
-            var sizeItem = new MenuItem { Header = "📏 Ukuran Pet Mungil (Taskbar)", IsChecked = _isPetSizeSmall };
-            sizeItem.Click += (s, e) =>
-            {
-                _isPetSizeSmall = !_isPetSizeSmall;
-                sizeItem.IsChecked = _isPetSizeSmall;
-                double targetScale = _isPetSizeSmall ? 0.65 : 1.0;
-                _robotLayoutScale.ScaleX = targetScale;
-                _robotLayoutScale.ScaleY = targetScale;
-                _baseWindowHeight = _isPetSizeSmall ? 220 : 310;
-                _baseWindowWidth = _isPetSizeSmall ? 240 : 320;
-                Width = _baseWindowWidth;
-                Height = _drawerPanel.Visibility == Visibility.Visible ? _baseWindowHeight + 195 : _baseWindowHeight;
-                SnapToTaskbarBottom();
-            };
-            cm.Items.Add(sizeItem);
+            var pillItem = new MenuItem { Header = "🎛️ Tampilkan Tombol Kontrol Bawah" };
+            pillItem.Click += (s, e) => TogglePillVisibility();
+            cm.Items.Add(pillItem);
 
             cm.Items.Add(new Separator());
 
@@ -1157,7 +1181,7 @@ namespace ReyaFloatingCompanion
             _dragStartWindowPos = new Point(Left, Top);
             _lastDragScreenX = pt.X;
             _isDraggingWindow = true;
-            _isWalking = false; // Pause walk while holding
+            _isWalking = false;
             _robotCanvas.CaptureMouse();
         }
 
@@ -1175,13 +1199,11 @@ namespace ReyaFloatingCompanion
                 Left = _dragStartWindowPos.X + dx;
                 Top = _dragStartWindowPos.Y + dy;
 
-                // Picked up pose: feet dangle, arms flail up!
                 _leftArmRotate.Angle = -42;
                 _rightArmRotate.Angle = 42;
                 _leftLegRotate.Angle = 16;
                 _rightLegRotate.Angle = -16;
 
-                // Measure horizontal shake speed!
                 double vx = Math.Abs(pt.X - _lastDragScreenX);
                 _lastDragScreenX = pt.X;
                 if (vx > 28)
@@ -1190,7 +1212,7 @@ namespace ReyaFloatingCompanion
                     if (_shakeEnergy > 220)
                     {
                         _shakeEnergy = 0;
-                        TriggerReaction("dizzy", "🌀 ADUH PUSING~", "Waaah jangan digoyang kenceng-kenceng, duniaku muter~ @ _ @", true);
+                        TriggerReaction("dizzy", "🌀 PUSING~", "Waaah duniaku muter~ @ _ @", true);
                     }
                 }
             }
@@ -1206,32 +1228,34 @@ namespace ReyaFloatingCompanion
             GetCursorPos(out pt);
             double moved = Math.Sqrt(Math.Pow(pt.X - _dragStartMouseScreen.X, 2) + Math.Pow(pt.Y - _dragStartMouseScreen.Y, 2));
 
-            // If dropped near the taskbar (within 110px), snap right back on top of the taskbar!
+            // Snap back on top of the taskbar if dropped within 120px
             var wa = SystemParameters.WorkArea;
-            if (Math.Abs(Top - (wa.Bottom - Height)) < 110)
+            if (Math.Abs(Top - (wa.Bottom - Height)) < 120)
             {
                 Top = Math.Max(10, wa.Bottom - Height);
             }
 
-            // If it was just a click (not a drag), trigger zone-specific cute interaction!
+            // User clicked REYA: Toggle the bottom pill bar on click! ("kalau di klik bot nya baru muncul")
             if (moved < 7)
             {
+                TogglePillVisibility();
+
                 Point local = e.GetPosition(_robotCanvas);
                 if (local.Y < 48)
                 {
-                    TriggerReaction("headpat", "♥ NYAMAN DIELUS~", "Purrr~ nyaman banget dielus kepalaku! Semangat ya kerjanya ♥", true);
+                    TriggerReaction("headpat", "♥ NYAMAN DIELUS~", "Purrr~ nyaman banget dielus kepalaku! ♥", true);
                 }
                 else if (local.Y < 104)
                 {
-                    TriggerReaction("wink", "😜 BOOP HIDUNG!", "Ehehe hidungku di-boop! Jangan lupa senyum hari ini ya ;3", true);
+                    TriggerReaction("wink", "😜 BOOP HIDUNG!", "Ehehe hidungku di-boop! Jangan lupa senyum ya ;3", true);
                 }
                 else if (local.Y < 138)
                 {
-                    TriggerReaction("tickle", "😆 HAHAHA GELI!", "Hahaha geli tau perutku dikilik! >w<", true);
+                    TriggerReaction("tickle", "😆 GELI BANGET!", "Hahaha jangan dikilik perutku! >w<", true);
                 }
                 else
                 {
-                    TriggerReaction("dance", "🕺 GOYANG KAKI~", "Tap tap tap~ ayo kita jalan di atas taskbar sambil nyanyi! ♪", true);
+                    TriggerReaction("dance", "🕺 GOYANG KAKI~", "Tap tap tap~ ayo kita jalan di atas taskbar! ♪", true);
                 }
             }
         }
@@ -1256,9 +1280,9 @@ namespace ReyaFloatingCompanion
             return new Border
             {
                 Width = 1.0,
-                Height = 15,
+                Height = 14,
                 Background = HexBrush("#383E42"),
-                Margin = new Thickness(3, 0, 3, 0)
+                Margin = new Thickness(2.5, 0, 2.5, 0)
             };
         }
 
@@ -1338,13 +1362,13 @@ namespace ReyaFloatingCompanion
                 Content = new TextBlock
                 {
                     Text = iconText,
-                    FontSize = 11.5,
+                    FontSize = 10.5,
                     Foreground = Brushes.White,
                     VerticalAlignment = VerticalAlignment.Center
                 },
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
-                Padding = new Thickness(5, 2, 5, 2),
+                Padding = new Thickness(4, 1.5, 4, 1.5),
                 Cursor = Cursors.Hand,
                 ToolTip = tooltip
             };
@@ -1371,7 +1395,7 @@ namespace ReyaFloatingCompanion
                 _isAudioPaused = false;
                 _mouthOpen = false;
                 _playerMiniRow.Visibility = Visibility.Collapsed;
-                TriggerReaction("love", "✦ LAGU SELESAI", "Yey! Lagu " + _currentSongTitle + " selesai dinyanyikan sampai tuntas ♪", true);
+                TriggerReaction("love", "✦ SELESAI", "Lagu " + _currentSongTitle + " selesai sampai beres ♪", true);
             };
 
             _ttsPlayer.Volume = 1.0;
@@ -1414,6 +1438,9 @@ namespace ReyaFloatingCompanion
                 _walkToggleBtn.Foreground = HexBrush(_petWalkEnabled ? "#5CE8A0" : "#8E9692");
             };
 
+            var pillItem = new Forms.ToolStripMenuItem("🎛️ Buka/Tutup Tombol Kontrol Bawah");
+            pillItem.Click += (s, e) => TogglePillVisibility();
+
             var patItem = new Forms.ToolStripMenuItem("♥ Elus Kepala REYA");
             patItem.Click += (s, e) => TriggerReaction("headpat", "♥ NYAMAN DIELUS~", "Hehe makasih udah elus kepalaku! ♥", true);
 
@@ -1428,7 +1455,6 @@ namespace ReyaFloatingCompanion
                 ToggleDrawer();
             };
 
-            var snapItem = new MenuItem { Header = "📌 Pindahkan ke Atas Taskbar" };
             var taskbarItem = new Forms.ToolStripMenuItem("📌 Pindahkan ke Atas Taskbar");
             taskbarItem.Click += (s, e) => SnapToTaskbarBottom();
 
@@ -1441,6 +1467,7 @@ namespace ReyaFloatingCompanion
 
             menu.Items.Add(topItem);
             menu.Items.Add(walkItem);
+            menu.Items.Add(pillItem);
             menu.Items.Add(patItem);
             menu.Items.Add(bobaItem);
             menu.Items.Add(inputItem);
@@ -1452,6 +1479,7 @@ namespace ReyaFloatingCompanion
             {
                 Show();
                 Activate();
+                TogglePillVisibility();
             };
         }
 
@@ -1478,11 +1506,11 @@ namespace ReyaFloatingCompanion
         private void TriggerReaction(string kind, string header, string bubbleText, bool playChime)
         {
             _reactionKind = kind;
-            _reactionUntilTick = _tickCount + 65; // ~3.25 seconds of rich expressive animation
+            _reactionUntilTick = _tickCount + 65;
             if (!_isSinging)
             {
                 SetCloudBubble(header, bubbleText, false);
-                _speechClearTick = _tickCount + 110;
+                _speechClearTick = _tickCount + 100;
             }
 
             if (playChime)
@@ -1493,29 +1521,29 @@ namespace ReyaFloatingCompanion
                     {
                         if (kind == "headpat" || kind == "love")
                         {
-                            Console.Beep(784, 50);
-                            Console.Beep(1046, 70);
+                            Console.Beep(784, 45);
+                            Console.Beep(1046, 65);
                         }
                         else if (kind == "tickle")
                         {
-                            Console.Beep(987, 40);
-                            Console.Beep(1174, 40);
-                            Console.Beep(1318, 55);
+                            Console.Beep(987, 35);
+                            Console.Beep(1174, 35);
+                            Console.Beep(1318, 50);
                         }
                         else if (kind == "boba" || kind == "star")
                         {
-                            Console.Beep(659, 45);
-                            Console.Beep(880, 45);
-                            Console.Beep(1318, 70);
+                            Console.Beep(659, 40);
+                            Console.Beep(880, 40);
+                            Console.Beep(1318, 65);
                         }
                         else if (kind == "dizzy")
                         {
-                            Console.Beep(600, 45);
-                            Console.Beep(480, 65);
+                            Console.Beep(600, 40);
+                            Console.Beep(480, 60);
                         }
                         else
                         {
-                            Console.Beep(880, 55);
+                            Console.Beep(880, 50);
                         }
                     }
                     catch { }
@@ -1528,8 +1556,13 @@ namespace ReyaFloatingCompanion
             _tickCount++;
             double t = _tickCount * 0.14;
 
-            // Decay shake energy slowly
             if (_shakeEnergy > 0) _shakeEnergy = Math.Max(0, _shakeEnergy - 4);
+
+            // Auto-close pill if untouched
+            if (_pillAutoCloseTick > 0 && _tickCount >= _pillAutoCloseTick && _drawerPanel.Visibility != Visibility.Visible)
+            {
+                TogglePillVisibility(false);
+            }
 
             bool inReaction = _tickCount < _reactionUntilTick;
 
@@ -1537,8 +1570,8 @@ namespace ReyaFloatingCompanion
             // TASKBAR WALKING PET SYSTEM
             // ====================================================================
             var wa = SystemParameters.WorkArea;
-            double minLeft = wa.Left + 15;
-            double maxLeft = Math.Max(minLeft + 40, wa.Right - Width - 15);
+            double minLeft = wa.Left + 10;
+            double maxLeft = Math.Max(minLeft + 30, wa.Right - Width - 10);
 
             if (_petWalkEnabled && !_isDraggingWindow && !_isThinking)
             {
@@ -1547,46 +1580,42 @@ namespace ReyaFloatingCompanion
                     _walkPhaseTicks++;
                     _walkStepCycle += 0.28;
 
-                    // Walk across the taskbar!
-                    double currentSpeed = _isSinging ? 0.9 : _walkSpeed;
+                    double currentSpeed = _isSinging ? 0.8 : _walkSpeed;
                     Left += _walkDirection * currentSpeed;
 
-                    // Reached left or right taskbar edge? Turn around!
                     if (Left <= minLeft)
                     {
                         Left = minLeft;
-                        _walkDirection = 1; // Turn right
+                        _walkDirection = 1;
                         _isWalking = false;
                         _walkPhaseTicks = 0;
-                        _idleDurationTicks = 70;
-                        TriggerReaction("wink", "✦ PUTAR BALIK", "Udah di pojok kiri, jalan lagi ke kanan yuk! ;3", false);
+                        _idleDurationTicks = 65;
+                        TriggerReaction("wink", "✦ PUTAR", "Udah di pojok kiri, jalan ke kanan lagi ya ;3", false);
                     }
                     else if (Left >= maxLeft)
                     {
                         Left = maxLeft;
-                        _walkDirection = -1; // Turn left
+                        _walkDirection = -1;
                         _isWalking = false;
                         _walkPhaseTicks = 0;
-                        _idleDurationTicks = 70;
-                        TriggerReaction("wink", "✦ PUTAR BALIK", "Udah di pojok kanan, jalan lagi ke kiri yuk! ;3", false);
+                        _idleDurationTicks = 65;
+                        TriggerReaction("wink", "✦ PUTAR", "Udah di pojok kanan, jalan ke kiri lagi ya ;3", false);
                     }
                     else if (_walkPhaseTicks >= _walkDurationTicks)
                     {
-                        // Stroll segment complete -> pause to look around
                         _isWalking = false;
                         _walkPhaseTicks = 0;
-                        _idleDurationTicks = 60 + (_tickCount % 70);
+                        _idleDurationTicks = 55 + (_tickCount % 65);
                     }
                 }
                 else
                 {
-                    // Idle on top of the taskbar
                     _walkPhaseTicks++;
                     if (_walkPhaseTicks >= _idleDurationTicks)
                     {
                         _isWalking = true;
                         _walkPhaseTicks = 0;
-                        _walkDurationTicks = 80 + (_tickCount % 110);
+                        _walkDurationTicks = 75 + (_tickCount % 100);
                         if ((_tickCount % 4) == 0)
                         {
                             _walkDirection = -_walkDirection;
@@ -1595,34 +1624,34 @@ namespace ReyaFloatingCompanion
                 }
             }
 
-            // Ensure Y remains on taskbar unless user dragged her high
+            // Ensure feet sit directly on taskbar
             if (!_isDraggingWindow && _drawerPanel.Visibility != Visibility.Visible)
             {
                 double targetTop = wa.Bottom - Height;
-                if (Math.Abs(Top - targetTop) < 60)
+                if (Math.Abs(Top - targetTop) < 50)
                 {
                     Top = targetTop;
                 }
             }
 
-            // Autonomous Cute Idle Antics every ~14 seconds when not singing/speaking
-            if (!inReaction && !_isSinging && !_isSpeaking && !_isThinking && (_tickCount % 280 == 0))
+            // Autonomous Idle Antics
+            if (!inReaction && !_isSinging && !_isSpeaking && !_isThinking && (_tickCount % 260 == 0))
             {
-                int idlePick = (_tickCount / 280) % 5;
+                int idlePick = (_tickCount / 260) % 5;
                 if (idlePick == 0)
-                    TriggerReaction("wave", "👋 HAI TEMAN KERJA!", "Masih semangat kan? Aku temenin di atas taskbar ya ♥", false);
+                    TriggerReaction("wave", "👋 HAI!", "Masih semangat kan? Aku temenin di sini ya ♥", false);
                 else if (idlePick == 1)
-                    TriggerReaction("boba", "🧋 ISTIRAHAT SEJENAK", "Slurp~ jangan lupa minum air putih biar tetap fokus ♪", false);
+                    TriggerReaction("boba", "🧋 REHAT", "Slurp~ jangan lupa minum air biar segar ♪", false);
                 else if (idlePick == 2)
-                    TriggerReaction("dance", "🎵 SENANDUNG KECIL", "La la la~ klik 📝 kalau mau putar lagu sambil kerja ya!", false);
+                    TriggerReaction("dance", "🎵 LAGU", "Klik badanku kalau mau putar lagu ya!", false);
                 else if (idlePick == 3)
-                    TriggerReaction("wink", "✨ FOKUS KEREN!", "Wah serius banget kerjanya, aku suka semangatmu! ;3", false);
+                    TriggerReaction("wink", "✨ FOKUS", "Kerjaanmu keren banget, teruskan ya! ;3", false);
                 else
-                    TriggerReaction("headpat", "♥ ELUS AKU DONG", "Klik kepalaku buat elus atau perutku buat kilik ya~", false);
+                    TriggerReaction("headpat", "♥ ELUS", "Klik badanku untuk elus atau buka tombol ya~", false);
                 inReaction = true;
             }
 
-            // 1. Global Cursor Eye-Tracking
+            // Cursor Eye-Tracking
             POINT pt;
             if (GetCursorPos(out pt))
             {
@@ -1632,24 +1661,22 @@ namespace ReyaFloatingCompanion
                     double dx = pt.X - screenCenter.X;
                     double dy = pt.Y - screenCenter.Y;
                     double dist = Math.Sqrt(dx * dx + dy * dy);
-                    double factor = Math.Tanh(dist / 170.0);
+                    double factor = Math.Tanh(dist / 160.0);
                     double angle = Math.Atan2(dy, dx);
 
-                    _eyesGazeTransform.X = Math.Cos(angle) * factor * 6.5;
-                    _eyesGazeTransform.Y = Math.Sin(angle) * factor * 4.5;
-                    _leftPupilTransform.X = Math.Cos(angle) * factor * 3.5;
-                    _leftPupilTransform.Y = Math.Sin(angle) * factor * 3.0;
+                    _eyesGazeTransform.X = Math.Cos(angle) * factor * 6.0;
+                    _eyesGazeTransform.Y = Math.Sin(angle) * factor * 4.0;
+                    _leftPupilTransform.X = Math.Cos(angle) * factor * 3.2;
+                    _leftPupilTransform.Y = Math.Sin(angle) * factor * 2.8;
                     _rightPupilTransform.X = _leftPupilTransform.X;
                     _rightPupilTransform.Y = _leftPupilTransform.Y;
                 }
                 catch { }
             }
 
-            // 2. Expressive Eyes, Ears, Cheeks, and Walking Movement
             int blinkMod = _tickCount % 68;
             _isBlinking = (blinkMod == 0 || blinkMod == 1);
 
-            // Flip facing direction cleanly based on walk direction!
             _robotScaleTransform.ScaleX = (_walkDirection > 0 ? 1.0 : -1.0);
             _torsoBadgeText.RenderTransform = new ScaleTransform(_walkDirection > 0 ? 1.0 : -1.0, 1.0, 6, 6);
             _propSticker.RenderTransform = new ScaleTransform(_walkDirection > 0 ? 1.0 : -1.0, 1.0, 10, 10);
@@ -1726,33 +1753,32 @@ namespace ReyaFloatingCompanion
                     _propSticker.Text = "👋";
                 }
 
-                _robotBobTransform.Y = -Math.Abs(Math.Sin(t * 2.6)) * 6.5;
-                _robotTiltTransform.Angle = Math.Sin(t * 2.8) * (_reactionKind == "tickle" || _reactionKind == "dizzy" ? 8.5 : 5.0);
-                _leftEarRotate.Angle = -14 + Math.Sin(t * 3.5) * 12;
-                _rightEarRotate.Angle = 14 - Math.Sin(t * 3.5) * 12;
-                _leftArmRotate.Angle = -35 + Math.Sin(t * 3.2) * 28;
-                _rightArmRotate.Angle = 35 - Math.Sin(t * 3.2) * 28;
-                _leftLegRotate.Angle = Math.Sin(t * 3.2) * 14;
-                _rightLegRotate.Angle = -Math.Sin(t * 3.2) * 14;
+                _robotBobTransform.Y = -Math.Abs(Math.Sin(t * 2.6)) * 5.5;
+                _robotTiltTransform.Angle = Math.Sin(t * 2.8) * (_reactionKind == "tickle" || _reactionKind == "dizzy" ? 7.5 : 4.5);
+                _leftEarRotate.Angle = -14 + Math.Sin(t * 3.5) * 10;
+                _rightEarRotate.Angle = 14 - Math.Sin(t * 3.5) * 10;
+                _leftArmRotate.Angle = -35 + Math.Sin(t * 3.2) * 26;
+                _rightArmRotate.Angle = 35 - Math.Sin(t * 3.2) * 26;
+                _leftLegRotate.Angle = Math.Sin(t * 3.2) * 12;
+                _rightLegRotate.Angle = -Math.Sin(t * 3.2) * 12;
                 Canvas.SetTop(_propSticker, 90 + Math.Sin(t * 2.5) * 4);
             }
             else if (_petWalkEnabled && _isWalking && !_isDraggingWindow)
             {
-                // Active walking stride animation!
                 ShowNormalEyes();
                 _leftEye.Height = _isBlinking ? 3 : 23;
                 _rightEye.Height = _isBlinking ? 3 : 23;
 
                 double stepSin = Math.Sin(_walkStepCycle);
-                _leftLegRotate.Angle = stepSin * 26.0;
-                _rightLegRotate.Angle = -stepSin * 26.0;
-                _robotBobTransform.Y = -Math.Abs(stepSin) * 4.0;
-                _robotTiltTransform.Angle = stepSin * 3.5;
-                _leftArmRotate.Angle = -15 + stepSin * 22.0;
-                _rightArmRotate.Angle = 15 - stepSin * 22.0;
-                _leftEarRotate.Angle = -14 + stepSin * 6;
-                _rightEarRotate.Angle = 14 - stepSin * 6;
-                _antennaRotate.Angle = Math.Sin(_walkStepCycle * 0.9) * 8.0;
+                _leftLegRotate.Angle = stepSin * 24.0;
+                _rightLegRotate.Angle = -stepSin * 24.0;
+                _robotBobTransform.Y = -Math.Abs(stepSin) * 3.5;
+                _robotTiltTransform.Angle = stepSin * 3.0;
+                _leftArmRotate.Angle = -15 + stepSin * 18.0;
+                _rightArmRotate.Angle = 15 - stepSin * 18.0;
+                _leftEarRotate.Angle = -14 + stepSin * 5;
+                _rightEarRotate.Angle = 14 - stepSin * 5;
+                _antennaRotate.Angle = Math.Sin(_walkStepCycle * 0.9) * 7.0;
 
                 if (_isSinging)
                 {
@@ -1776,14 +1802,14 @@ namespace ReyaFloatingCompanion
                 _leftEye.Height = _isBlinking ? 3 : 23;
                 _rightEye.Height = _isBlinking ? 3 : 23;
 
-                _robotBobTransform.Y = Math.Sin(t * 2.2) * 4.5;
-                _robotTiltTransform.Angle = Math.Sin(t * 1.1) * 4.5;
+                _robotBobTransform.Y = Math.Sin(t * 2.2) * 4.0;
+                _robotTiltTransform.Angle = Math.Sin(t * 1.1) * 4.0;
                 _leftEarRotate.Angle = -14 + Math.Sin(t * 2.2) * 8;
                 _rightEarRotate.Angle = 14 - Math.Sin(t * 2.2) * 8;
-                _leftArmRotate.Angle = -25 + Math.Sin(t * 2.2) * 20;
-                _rightArmRotate.Angle = 25 - Math.Sin(t * 2.2) * 20;
-                _leftLegRotate.Angle = Math.Sin(t * 2.2) * 12;
-                _rightLegRotate.Angle = -Math.Sin(t * 2.2) * 12;
+                _leftArmRotate.Angle = -25 + Math.Sin(t * 2.2) * 18;
+                _rightArmRotate.Angle = 25 - Math.Sin(t * 2.2) * 18;
+                _leftLegRotate.Angle = Math.Sin(t * 2.2) * 10;
+                _rightLegRotate.Angle = -Math.Sin(t * 2.2) * 10;
 
                 _floatingHearts.Visibility = Visibility.Visible;
                 _floatingHearts.Text = (_tickCount / 10) % 2 == 0 ? "♪" : "♫";
@@ -1799,12 +1825,12 @@ namespace ReyaFloatingCompanion
                 _leftEye.Height = _isBlinking ? 3 : 23;
                 _rightEye.Height = _isBlinking ? 3 : 23;
 
-                _robotBobTransform.Y = Math.Sin(t * 0.8) * 2.5;
-                _robotTiltTransform.Angle = Math.Sin(t * 0.4) * 1.2;
-                _leftEarRotate.Angle = -14 + Math.Sin(t * 0.7) * 3;
-                _rightEarRotate.Angle = 14 - Math.Sin(t * 0.7) * 3;
-                _leftArmRotate.Angle = -15 + Math.Sin(t * 0.8) * 6;
-                _rightArmRotate.Angle = 15 - Math.Sin(t * 0.8) * 6;
+                _robotBobTransform.Y = Math.Sin(t * 0.8) * 2.0;
+                _robotTiltTransform.Angle = Math.Sin(t * 0.4) * 1.0;
+                _leftEarRotate.Angle = -14 + Math.Sin(t * 0.7) * 2.5;
+                _rightEarRotate.Angle = 14 - Math.Sin(t * 0.7) * 2.5;
+                _leftArmRotate.Angle = -15 + Math.Sin(t * 0.8) * 5;
+                _rightArmRotate.Angle = 15 - Math.Sin(t * 0.8) * 5;
                 _leftLegRotate.Angle = 0;
                 _rightLegRotate.Angle = 0;
 
@@ -1814,7 +1840,7 @@ namespace ReyaFloatingCompanion
                 _antennaBulb.Fill = HexBrush("#5CE8A0");
             }
 
-            // 3. Sync Karaoke Lyrics & Mouth directly to _musicPlayer.Position
+            // Sync Karaoke Lyrics
             if (_isSinging && !_isAudioPaused)
             {
                 double currentSec = 0;
@@ -1896,16 +1922,16 @@ namespace ReyaFloatingCompanion
                 {
                     _speechClearTick = 0;
                     string[] idleLines = {
-                        "Lagi nemenin kamu kerja di atas taskbar ♪",
-                        "Semangat kerjanya ya! Klik ♥ buat elus aku~",
+                        "Lagi jalan di atas taskbar nemenin kamu ♪",
+                        "Semangat kerjanya ya! Klik badanku untuk menu~",
                         "Jangan lupa senyum dan minum air ya! ;3",
-                        "Klik 📝 di bawah buat putar lagu full ♪"
+                        "Klik badanku kalau mau putar lagu full ♪"
                     };
-                    SetCloudBubble("✦ REYA TEMAN KERJA", idleLines[(_tickCount / 80) % idleLines.Length], false);
+                    SetCloudBubble("✦ REYA", idleLines[(_tickCount / 80) % idleLines.Length], false);
                 }
             }
 
-            // 4. Mouth & Pill Waveform Animation
+            // Mouth & Waveform Animation
             bool showActiveMouth = _isSpeaking || (_isSinging && !_isAudioPaused && _mouthOpen);
             bool showHappyLaughMouth = inReaction && (_reactionKind == "tickle" || _reactionKind == "boba" || _reactionKind == "headpat");
 
@@ -1913,17 +1939,17 @@ namespace ReyaFloatingCompanion
             _happyOpenMouth.Visibility = (!showActiveMouth && showHappyLaughMouth) ? Visibility.Visible : Visibility.Collapsed;
             _catMouth.Visibility = (!showActiveMouth && !showHappyLaughMouth) ? Visibility.Visible : Visibility.Collapsed;
 
-            double[] baseWave = { 5, 10, 14, 10, 5 };
+            double[] baseWave = { 4, 8, 12, 8, 4 };
             for (int i = 0; i < 5; i++)
             {
                 if (showActiveMouth)
                 {
-                    double h = 3.5 + Math.Abs(Math.Sin((_tickCount * 0.45) + i * 1.1)) * 9;
+                    double h = 3.0 + Math.Abs(Math.Sin((_tickCount * 0.45) + i * 1.1)) * 8;
                     _mouthBars[i].Height = h;
                 }
                 if ((_isSinging && !_isAudioPaused) || _isSpeaking)
                 {
-                    double wh = 4 + Math.Abs(Math.Sin((_tickCount * 0.4) + i * 0.9)) * 11;
+                    double wh = 3.5 + Math.Abs(Math.Sin((_tickCount * 0.4) + i * 0.9)) * 9;
                     _pillWaveBars[i].Height = wh;
                     _pillWaveBars[i].Background = HexBrush("#5CE8A0");
                 }
@@ -2023,10 +2049,10 @@ namespace ReyaFloatingCompanion
 
             if (string.IsNullOrEmpty(reply))
             {
-                reply = "Aku selalu siap nemenin kamu kerja di atas taskbar! Kalau mau lagu, ketik aja judul lagunya ya ♪";
+                reply = "Aku siap nemenin kamu di atas taskbar! Kalau mau lagu, ketik aja judulnya ya ♪";
             }
             _statusMiniText.Text = "REYA: " + reply;
-            TriggerReaction("love", "🗣️ REYA MENJAWAB", reply, false);
+            TriggerReaction("love", "🗣️ REYA", reply, false);
             await SpeakAndShowAsync(reply);
         }
 
@@ -2061,14 +2087,14 @@ namespace ReyaFloatingCompanion
             catch { }
 
             _isSpeaking = false;
-            _speechClearTick = _tickCount + 85;
+            _speechClearTick = _tickCount + 80;
         }
 
         private async Task PlayBitChordSongAsync(string query)
         {
             StopSong();
-            _statusMiniText.Text = "Mencari full lagu \"" + query + "\"...";
-            SetCloudBubble("🔍 MENCARI LAGU...", "Mencari \"" + query + "\" ♪", true);
+            _statusMiniText.Text = "Mencari \"" + query + "\"...";
+            SetCloudBubble("🔍 CARI LAGU...", "Mencari \"" + query + "\" ♪", true);
 
             try
             {
@@ -2105,7 +2131,7 @@ namespace ReyaFloatingCompanion
 
                 if (string.IsNullOrEmpty(audioUrl))
                 {
-                    _statusMiniText.Text = "Audio tidak ditemukan untuk " + query;
+                    _statusMiniText.Text = "Audio tidak ditemukan";
                     SetCloudBubble("✦ INFO LAGU", "Lagu belum tersedia, coba judul lain ya!", false);
                     return;
                 }
@@ -2115,8 +2141,8 @@ namespace ReyaFloatingCompanion
                     audioUrl = BaseApiUrl + audioUrl;
                 }
 
-                _statusMiniText.Text = "Menyiapkan audio: " + _currentSongTitle + "...";
-                SetCloudBubble("🎧 MENYIAPKAN LAGU...", _currentSongTitle + " ♪", true);
+                _statusMiniText.Text = "Menyiapkan: " + _currentSongTitle + "...";
+                SetCloudBubble("🎧 MENYIAPKAN...", _currentSongTitle + " ♪", true);
 
                 string fastStreamUrl = audioUrl.Replace("_320.mp4", "_160.mp4");
                 byte[] songBytes = null;
@@ -2145,13 +2171,13 @@ namespace ReyaFloatingCompanion
                 _songProgressSlider.Value = 0;
                 _playerMiniRow.Visibility = Visibility.Visible;
                 _pauseResumeBtn.Content = "⏸";
-                _statusMiniText.Text = "Memutar full lagu sampai selesai: " + _currentSongTitle;
+                _statusMiniText.Text = "Memutar: " + _currentSongTitle;
 
                 _isSinging = true;
                 _isAudioPaused = false;
                 SetCloudBubble(
                     "🎤 " + _currentSongTitle,
-                    _currentLyrics.Count > 0 ? _currentLyrics[0].Text : "♪ Bernyanyi lagu penuh bersama REYA... ♫",
+                    _currentLyrics.Count > 0 ? _currentLyrics[0].Text : "♪ Bernyanyi lagu penuh... ♫",
                     true
                 );
 
@@ -2161,8 +2187,8 @@ namespace ReyaFloatingCompanion
             catch (Exception ex)
             {
                 _isSinging = false;
-                _statusMiniText.Text = "Gagal memuat lagu: " + ex.Message;
-                SetCloudBubble("✦ COBA LAGI YA", "Klik ulang judul lagunya ya ♪", false);
+                _statusMiniText.Text = "Gagal: " + ex.Message;
+                SetCloudBubble("✦ COBA LAGI", "Klik ulang judul lagunya ya ♪", false);
             }
         }
 
@@ -2202,7 +2228,7 @@ namespace ReyaFloatingCompanion
             {
                 _playerMiniRow.Visibility = Visibility.Collapsed;
             }
-            SetCloudBubble("✦ REYA TEMAN KERJA", "Semangat kerjanya ya! Aku temenin di sini ♥", false);
+            SetCloudBubble("✦ REYA", "Semangat kerjanya ya! Aku temenin di sini ♥", false);
         }
 
         private static string EscapeJson(string s)

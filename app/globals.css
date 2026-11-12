@@ -3231,6 +3231,9 @@ button {
   align-items: center;
   position: relative;
   filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.28));
+  transform: scale(0.72);
+  transform-origin: top center;
+  margin-bottom: -32px;
 }
 
 .codex-pet-stage .robot-head-top {
@@ -3425,6 +3428,11 @@ button {
   justify-content: center;
   gap: 4px;
   z-index: 10;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.codex-action-pill.hidden-pill {
+  display: none !important;
 }
 
 .codex-pill-btn {

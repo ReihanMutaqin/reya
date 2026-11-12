@@ -2168,6 +2168,7 @@ export default function Home() {
   const [showInstrumentDeck] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [petWalk, setPetWalk] = useState(true);
+  const [showPill, setShowPill] = useState(false);
 
   // Enchor.us Karaoke & Cute Singing State
   const [enchorQuery, setEnchorQuery] = useState("Bohemian Rhapsody");
@@ -4398,8 +4399,12 @@ export default function Home() {
           }
           spokenText={activeSpeechText}
           lastActivity={lastActivity}
-          onPoke={handleRobotPoke}
+          onPoke={(kind) => {
+            setShowPill((p) => !p);
+            handleRobotPoke(kind);
+          }}
           onSingClick={() => {
+            setShowPill((p) => !p);
             if (singingMode || enchorAudioPlaying) {
               stopSong();
             } else {
@@ -4408,8 +4413,12 @@ export default function Home() {
           }}
         />
 
-        {/* CODEX-STYLE DARK CAPSULE PILL UNDER THE BOT: [ ♥ | ★ | 🧋 | 🕺 | 🐾 | 📝 | 🎙️ ] */}
-        <div className="codex-action-pill" role="toolbar" aria-label="Kontrol REYA">
+        {/* CODEX-STYLE DARK CAPSULE PILL: HIDDEN BY DEFAULT, SHOWN WHEN BOT IS CLICKED */}
+        <div
+          className={`codex-action-pill ${showPill ? "visible" : "hidden-pill"}`}
+          role="toolbar"
+          aria-label="Kontrol REYA"
+        >
           <button
             type="button"
             className="codex-pill-btn"
