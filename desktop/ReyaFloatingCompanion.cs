@@ -136,12 +136,20 @@ namespace ReyaFloatingCompanion
         private int _idleDurationTicks = 75;
         private double _walkStepCycle = 0;
 
-        // Drag / Shake detection
+        // Drag, Pick-Up & Gravity Physics
         private bool _isDraggingWindow = false;
+        private bool _hasDraggedEnough = false;
         private Point _dragStartMouseScreen;
         private Point _dragStartWindowPos;
         private double _lastDragScreenX = 0;
+        private double _lastDragScreenY = 0;
+        private double _dragVelocityX = 0;
+        private double _dragVelocityY = 0;
         private double _shakeEnergy = 0;
+        private bool _isFalling = false;
+        private double _fallVelocityY = 0;
+        private double _fallVelocityX = 0;
+        private int _landingSquashTicks = 0;
 
         private DispatcherTimer _animTimer;
         private Forms.NotifyIcon _trayIcon;
@@ -199,6 +207,9 @@ namespace ReyaFloatingCompanion
                 Left = Math.Max(20, workArea.Right - Width - 35);
             }
             Top = Math.Max(10, workArea.Bottom - Height);
+            _isFalling = false;
+            _fallVelocityY = 0;
+            _fallVelocityX = 0;
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -331,7 +342,7 @@ namespace ReyaFloatingCompanion
             _robotLayoutScale = new ScaleTransform(_petScale, _petScale);
             _robotCanvas.LayoutTransform = _robotLayoutScale;
 
-            _robotCanvas.RenderTransformOrigin = new Point(0.5, 0.5);
+            _robotCanvas.RenderTransformOrigin = new Point(0.5, 1.0);
             var robotTransformGroup = new TransformGroup();
             _robotScaleTransform = new ScaleTransform(1, 1);
             _robotBobTransform = new TranslateTransform(0, 0);
@@ -1183,7 +1194,14 @@ namespace ReyaFloatingCompanion
             _dragStartMouseScreen = new Point(pt.X, pt.Y);
             _dragStartWindowPos = new Point(Left, Top);
             _lastDragScreenX = pt.X;
+            _lastDragScreenY = pt.Y;
+            _dragVelocityX = 0;
+            _dragVelocityY = 0;
             _isDraggingWindow = true;
+            _hasDraggedEnough = false;
+            _isFalling = false;
+            _fallVelocityY = 0;
+            _fallVelocityX = 0;
             _isWalking = false;
             _robotCanvas.CaptureMouse();
         }
@@ -1196,19 +1214,29 @@ namespace ReyaFloatingCompanion
 
             double dx = pt.X - _dragStartMouseScreen.X;
             double dy = pt.Y - _dragStartMouseScreen.Y;
+            double moveDist = Math.Sqrt(dx * dx + dy * dy);
 
-            if (Math.Abs(dx) > 3 || Math.Abs(dy) > 3)
+            if (moveDist > 4)
             {
+                if (!_hasDraggedEnough)
+                {
+                    _hasDraggedEnough = true;
+                    if (!_isSinging)
+                    {
+                        SetCloudBubble("🎈 DIANGKAT!", "Waaah aku diangkat melayang! ☁️", false);
+                        _speechClearTick = _tickCount + 80;
+                    }
+                }
+
+                _dragVelocityX = pt.X - _lastDragScreenX;
+                _dragVelocityY = pt.Y - _lastDragScreenY;
+                _lastDragScreenX = pt.X;
+                _lastDragScreenY = pt.Y;
+
                 Left = _dragStartWindowPos.X + dx;
                 Top = _dragStartWindowPos.Y + dy;
 
-                _leftArmRotate.Angle = -42;
-                _rightArmRotate.Angle = 42;
-                _leftLegRotate.Angle = 16;
-                _rightLegRotate.Angle = -16;
-
-                double vx = Math.Abs(pt.X - _lastDragScreenX);
-                _lastDragScreenX = pt.X;
+                double vx = Math.Abs(_dragVelocityX);
                 if (vx > 28)
                 {
                     _shakeEnergy += vx;
@@ -1231,16 +1259,34 @@ namespace ReyaFloatingCompanion
             GetCursorPos(out pt);
             double moved = Math.Sqrt(Math.Pow(pt.X - _dragStartMouseScreen.X, 2) + Math.Pow(pt.Y - _dragStartMouseScreen.Y, 2));
 
-            // Snap back on top of the taskbar if dropped within 120px
             var wa = SystemParameters.WorkArea;
-            if (Math.Abs(Top - (wa.Bottom - Height)) < 120)
-            {
-                Top = Math.Max(10, wa.Bottom - Height);
-            }
+            double targetTop = wa.Bottom - Height;
 
-            // User clicked REYA: Toggle the bottom pill bar on click! ("kalau di klik bot nya baru muncul")
-            if (moved < 7)
+            if (_hasDraggedEnough || moved >= 7)
             {
+                // Released above taskbar: ACTIVATE GRAVITY AND FALL DOWN!
+                if (Top < targetTop - 4)
+                {
+                    _isFalling = true;
+                    _fallVelocityY = Math.Max(0.5, Math.Min(16.0, _dragVelocityY));
+                    _fallVelocityX = Math.Max(-10.0, Math.Min(10.0, _dragVelocityX * 0.45));
+                    if (!_isSinging)
+                    {
+                        SetCloudBubble("🍃 JATUH!", "Waaa meluncur jatuh ke bawah~! 🍃", false);
+                        _speechClearTick = _tickCount + 80;
+                    }
+                }
+                else
+                {
+                    Top = targetTop;
+                    _isFalling = false;
+                    _landingSquashTicks = 8;
+                    TriggerReaction("love", "🐾 MENDARAT!", "Bloop! Mendarat lagi di taskbar ;3", true);
+                }
+            }
+            else
+            {
+                // Normal click without drag: Toggle the bottom pill bar!
                 TogglePillVisibility();
 
                 Point local = e.GetPosition(_robotCanvas);
@@ -1574,10 +1620,60 @@ namespace ReyaFloatingCompanion
             // TASKBAR WALKING PET SYSTEM
             // ====================================================================
             var wa = SystemParameters.WorkArea;
+            double targetTop = wa.Bottom - Height;
             double minLeft = wa.Left + 10;
             double maxLeft = Math.Max(minLeft + 30, wa.Right - Width - 10);
 
-            if (_petWalkEnabled && !_isDraggingWindow && !_isThinking)
+            // ====================================================================
+            // 1. GRAVITY & FALLING PHYSICS SIMULATION
+            // ====================================================================
+            if (_isFalling && !_isDraggingWindow)
+            {
+                _fallVelocityY += 3.2; // Gravity acceleration
+                if (_fallVelocityY > 38.0) _fallVelocityY = 38.0; // Terminal velocity
+
+                Top += _fallVelocityY;
+                Left += _fallVelocityX;
+                _fallVelocityX *= 0.94; // Air resistance
+
+                // Bounce off monitor horizontal bounds
+                if (Left < minLeft)
+                {
+                    Left = minLeft;
+                    _fallVelocityX = -_fallVelocityX * 0.4;
+                }
+                else if (Left > maxLeft)
+                {
+                    Left = maxLeft;
+                    _fallVelocityX = -_fallVelocityX * 0.4;
+                }
+
+                // Check impact with taskbar
+                if (Top >= targetTop)
+                {
+                    Top = targetTop;
+                    if (_fallVelocityY > 7.0)
+                    {
+                        // Bounce!
+                        _fallVelocityY = -_fallVelocityY * 0.35;
+                        Task.Run(() => { try { Console.Beep(580, 30); } catch { } });
+                    }
+                    else
+                    {
+                        // Landed smoothly on taskbar!
+                        _isFalling = false;
+                        _fallVelocityY = 0;
+                        _fallVelocityX = 0;
+                        _landingSquashTicks = 8;
+                        TriggerReaction("love", "🐾 MENDARAT!", "Bloop! Mendarat dengan selamat di taskbar ;3", true);
+                    }
+                }
+            }
+
+            // ====================================================================
+            // 2. TASKBAR WALKING PET SYSTEM
+            // ====================================================================
+            if (_petWalkEnabled && !_isDraggingWindow && !_isFalling && !_isThinking)
             {
                 if (_isWalking)
                 {
@@ -1629,9 +1725,8 @@ namespace ReyaFloatingCompanion
             }
 
             // Ensure feet sit directly on taskbar
-            if (!_isDraggingWindow && _drawerPanel.Visibility != Visibility.Visible)
+            if (!_isDraggingWindow && !_isFalling && _drawerPanel.Visibility != Visibility.Visible)
             {
-                double targetTop = wa.Bottom - Height;
                 if (Math.Abs(Top - targetTop) < 50)
                 {
                     Top = targetTop;
@@ -1659,34 +1754,140 @@ namespace ReyaFloatingCompanion
             POINT pt;
             if (GetCursorPos(out pt))
             {
-                try
+                if (!_isDraggingWindow && !_isFalling)
                 {
-                    Point screenCenter = _robotCanvas.PointToScreen(new Point(80, 65));
-                    double dx = pt.X - screenCenter.X;
-                    double dy = pt.Y - screenCenter.Y;
-                    double dist = Math.Sqrt(dx * dx + dy * dy);
-                    double factor = Math.Tanh(dist / 160.0);
-                    double angle = Math.Atan2(dy, dx);
+                    try
+                    {
+                        Point screenCenter = _robotCanvas.PointToScreen(new Point(80, 65));
+                        double dx = pt.X - screenCenter.X;
+                        double dy = pt.Y - screenCenter.Y;
+                        double dist = Math.Sqrt(dx * dx + dy * dy);
+                        double factor = Math.Tanh(dist / 160.0);
+                        double angle = Math.Atan2(dy, dx);
 
-                    _eyesGazeTransform.X = Math.Cos(angle) * factor * 6.0;
-                    _eyesGazeTransform.Y = Math.Sin(angle) * factor * 4.0;
-                    _leftPupilTransform.X = Math.Cos(angle) * factor * 3.2;
-                    _leftPupilTransform.Y = Math.Sin(angle) * factor * 2.8;
-                    _rightPupilTransform.X = _leftPupilTransform.X;
-                    _rightPupilTransform.Y = _leftPupilTransform.Y;
+                        _eyesGazeTransform.X = Math.Cos(angle) * factor * 6.0;
+                        _eyesGazeTransform.Y = Math.Sin(angle) * factor * 4.0;
+                        _leftPupilTransform.X = Math.Cos(angle) * factor * 3.2;
+                        _leftPupilTransform.Y = Math.Sin(angle) * factor * 2.8;
+                        _rightPupilTransform.X = _leftPupilTransform.X;
+                        _rightPupilTransform.Y = _leftPupilTransform.Y;
+                    }
+                    catch { }
                 }
-                catch { }
             }
 
             int blinkMod = _tickCount % 68;
             _isBlinking = (blinkMod == 0 || blinkMod == 1);
 
-            _robotScaleTransform.ScaleX = (_walkDirection > 0 ? 1.0 : -1.0);
-            _torsoBadgeText.RenderTransform = new ScaleTransform(_walkDirection > 0 ? 1.0 : -1.0, 1.0);
-            _propSticker.RenderTransform = new ScaleTransform(_walkDirection > 0 ? 1.0 : -1.0, 1.0);
+            double dir = (_walkDirection > 0 ? 1.0 : -1.0);
+            _torsoBadgeText.RenderTransform = new ScaleTransform(dir, 1.0);
+            _propSticker.RenderTransform = new ScaleTransform(dir, 1.0);
 
-            if (inReaction)
+            // ====================================================================
+            // 3. ANIMATION STATE MACHINE (Drag/Lifted, Free Fall, Bounce Squash, etc.)
+            // ====================================================================
+            if (_isDraggingWindow && _hasDraggedEnough)
             {
+                // A. LIFTED / PICKED UP IN AIR (Dangling, kicking feet, arms flailing cutely)
+                ShowNormalEyes();
+                _leftEye.Height = 24;
+                _rightEye.Height = 24;
+
+                // Look down towards ground with surprised look
+                _eyesGazeTransform.X = 0;
+                _eyesGazeTransform.Y = 4.0;
+                _leftPupilTransform.Y = 2.8;
+                _rightPupilTransform.Y = 2.8;
+
+                // Arms flail cutely in the air
+                _leftArmRotate.Angle = -48 + Math.Sin(t * 6.5) * 24.0;
+                _rightArmRotate.Angle = 48 - Math.Sin(t * 6.5) * 24.0;
+
+                // Little feet dangling and kicking back and forth
+                _leftLegRotate.Angle = Math.Sin(t * 5.2) * 28.0;
+                _rightLegRotate.Angle = -Math.Sin(t * 5.2) * 28.0;
+
+                // Ears & antenna wiggle
+                _leftEarRotate.Angle = -18 + Math.Sin(t * 4.0) * 8.0;
+                _rightEarRotate.Angle = 18 - Math.Sin(t * 4.0) * 8.0;
+                _antennaRotate.Angle = Math.Sin(t * 4.0) * 16.0;
+                _antennaBulb.Fill = HexBrush("#5CE8A0");
+
+                // Slight body stretch
+                _robotScaleTransform.ScaleX = dir * 0.94;
+                _robotScaleTransform.ScaleY = 1.08;
+                _robotBobTransform.Y = Math.Sin(t * 4.0) * 2.5;
+                _robotTiltTransform.Angle = Math.Sin(t * 2.5) * 4.0;
+
+                _floatingHearts.Visibility = Visibility.Collapsed;
+                _propSticker.Visibility = Visibility.Collapsed;
+            }
+            else if (_isFalling)
+            {
+                // B. FREE-FALLING UNDER GRAVITY (Bracing for landing, upward wind rush)
+                ShowSpecialEyes(">", "<", "#E8F47A");
+
+                // Arms thrown up by wind
+                _leftArmRotate.Angle = -70 + Math.Sin(t * 8.0) * 10.0;
+                _rightArmRotate.Angle = 70 - Math.Sin(t * 8.0) * 10.0;
+
+                // Legs trailing behind
+                _leftLegRotate.Angle = -16 + Math.Sin(t * 6.0) * 8.0;
+                _rightLegRotate.Angle = 16 - Math.Sin(t * 6.0) * 8.0;
+
+                // Ears blown up
+                _leftEarRotate.Angle = -28;
+                _rightEarRotate.Angle = 28;
+                _antennaRotate.Angle = 20;
+
+                // Vertical speed stretch
+                _robotScaleTransform.ScaleX = dir * 0.88;
+                _robotScaleTransform.ScaleY = 1.16;
+                _robotBobTransform.Y = 0;
+                _robotTiltTransform.Angle = Math.Sin(t * 5.0) * 3.0;
+
+                _floatingHearts.Visibility = Visibility.Collapsed;
+                _propSticker.Visibility = Visibility.Collapsed;
+            }
+            else if (_landingSquashTicks > 0)
+            {
+                // C. LANDING IMPACT SQUASH & SPRING REBOUND
+                _landingSquashTicks--;
+                if (_landingSquashTicks >= 4)
+                {
+                    // Squash down wide on taskbar
+                    _robotScaleTransform.ScaleX = dir * 1.28;
+                    _robotScaleTransform.ScaleY = 0.74;
+                    _leftArmRotate.Angle = -24;
+                    _rightArmRotate.Angle = 24;
+                    _leftLegRotate.Angle = 26;
+                    _rightLegRotate.Angle = -26;
+                    _leftEarRotate.Angle = -8;
+                    _rightEarRotate.Angle = 8;
+                    _antennaRotate.Angle = -8;
+                    ShowSpecialEyes("^", "^", "#5CE8A0");
+                }
+                else
+                {
+                    // Spring rebound stretch
+                    _robotScaleTransform.ScaleX = dir * 0.92;
+                    _robotScaleTransform.ScaleY = 1.10;
+                    _leftArmRotate.Angle = -10;
+                    _rightArmRotate.Angle = 10;
+                    _leftLegRotate.Angle = 0;
+                    _rightLegRotate.Angle = 0;
+                    _leftEarRotate.Angle = -14;
+                    _rightEarRotate.Angle = 14;
+                    _antennaRotate.Angle = 0;
+                    ShowNormalEyes();
+                }
+                _robotBobTransform.Y = 0;
+                _robotTiltTransform.Angle = 0;
+            }
+            else if (inReaction)
+            {
+                _robotScaleTransform.ScaleX = dir * 1.0;
+                _robotScaleTransform.ScaleY = 1.0;
                 if (_reactionKind == "headpat" || _reactionKind == "love")
                 {
                     ShowSpecialEyes("^", "^", "#5CE8A0");
@@ -1767,8 +1968,10 @@ namespace ReyaFloatingCompanion
                 _rightLegRotate.Angle = -Math.Sin(t * 3.2) * 12;
                 Canvas.SetTop(_propSticker, 90 + Math.Sin(t * 2.5) * 4);
             }
-            else if (_petWalkEnabled && _isWalking && !_isDraggingWindow)
+            else if (_petWalkEnabled && _isWalking && !_isDraggingWindow && !_isFalling)
             {
+                _robotScaleTransform.ScaleX = dir * 1.0;
+                _robotScaleTransform.ScaleY = 1.0;
                 ShowNormalEyes();
                 _leftEye.Height = _isBlinking ? 3 : 23;
                 _rightEye.Height = _isBlinking ? 3 : 23;
@@ -1802,6 +2005,8 @@ namespace ReyaFloatingCompanion
             }
             else if (_isSinging && !_isAudioPaused)
             {
+                _robotScaleTransform.ScaleX = dir * 1.0;
+                _robotScaleTransform.ScaleY = 1.0;
                 ShowNormalEyes();
                 _leftEye.Height = _isBlinking ? 3 : 23;
                 _rightEye.Height = _isBlinking ? 3 : 23;
@@ -1825,6 +2030,8 @@ namespace ReyaFloatingCompanion
             }
             else
             {
+                _robotScaleTransform.ScaleX = dir * 1.0;
+                _robotScaleTransform.ScaleY = 1.0;
                 ShowNormalEyes();
                 _leftEye.Height = _isBlinking ? 3 : 23;
                 _rightEye.Height = _isBlinking ? 3 : 23;
